@@ -138,3 +138,23 @@ def test_compare_runs_rejects_other_repository(ctx, tmp_path: Path) -> None:
     dao.finish_scan_run(conn, r2, status="COMPLETED", coverage=FULL.key())
     with pytest.raises(ValueError, match="different repositories"):
         compare_runs(conn, r1, r2)
+
+
+def test_skipped_folder_findings_become_unverified_not_resolved(ctx) -> None:
+    conn, rid, run, status_of = ctx
+    inside = NormalizedFinding("trivy", "fs", "SECRET", "CRITICAL", rule_id="venv-secret",
+                               file_path=".venv/Lib/site-packages/x.py", line=1, identity=("venv",))
+    run([vuln("CVE-1"), inside])
+    skipping = Coverage("trivy", "fs", ".", FULL.categories, ALL, frozenset({".venv", "node_modules"}))
+    _, res = run([], cov=skipping)
+    assert status_of("CVE-1") == "RESOLVED"          # outside skipped folders: genuinely gone
+    assert status_of("venv-secret") == "UNVERIFIED"  # inside a skipped folder: not re-checked
+    assert len(res.resolved) == 1 and len(res.unverified) == 1
+
+
+def test_coverage_key_roundtrip_with_skip_dirs() -> None:
+    cov = Coverage("gitleaks", "dir", ".", frozenset({"SECRET"}), ALL, frozenset({".venv"}))
+    assert Coverage.from_key(cov.key()) == cov
+    assert Coverage.from_key(FULL.key()).skip_dirs == frozenset()  # old 5-part keys still parse
+    assert not cov.covers("gitleaks", "dir", ".", "SECRET", "HIGH", "sub/.venv/a.py")
+    assert cov.covers("gitleaks", "dir", ".", "SECRET", "HIGH", "src/venv_tools.py")  # name, not substring

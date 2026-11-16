@@ -86,7 +86,7 @@ class GitleaksScanner:
             ex.status, ex.error_message = "FAILED", f"Gitleaks exited with code {outcome.exit_code}: {err}"
             return ex
         try:
-            ex.findings = parse_gitleaks_report(report, scan_type=mode)
+            ex.findings = parse_gitleaks_report(report, scan_type=mode, base=target)
         except ReportParseError as exc:
             ex.status, ex.error_message = "FAILED", str(exc)
             return ex

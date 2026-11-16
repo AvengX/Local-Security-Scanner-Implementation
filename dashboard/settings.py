@@ -40,6 +40,11 @@ def render() -> None:
             conc = s2.number_input("Concurrency (repositories)", 1, 8, cfg.scan.concurrency)
             fresh_h = s3.number_input("DB freshness threshold (hours)", 1, 2160, cfg.scan.db_freshness_hours)
             sev = st.multiselect("Severity filter", list(SEVERITIES), cfg.scan.severities)
+            scan_skip = st.text_area(
+                "Folders skipped inside repositories while scanning (one per line)", "\n".join(cfg.scan.skip_dirs),
+                height=100, help="Installed dependencies and caches such as .venv or node_modules can contain tens of "
+                "thousands of files and make scans very slow. Dependencies are still checked from requirements.txt, "
+                "package-lock.json, etc. Leave empty to scan everything.")
             o1, o2 = st.columns(2)
             offline = o1.toggle("Offline mode (cached databases only)", cfg.scan.offline)
             retention = o2.number_input("History retention (days, 0 = forever)", 0, 3650, cfg.scan.retention_days)
@@ -68,7 +73,8 @@ def render() -> None:
             data.update(repository_roots=_lines(roots), excluded_dirs=_lines(excl), max_depth=int(max_depth),
                         follow_symlinks=follow)
             data["scan"].update(timeout_seconds=int(timeout), concurrency=int(conc), severities=sev,
-                                offline=offline, db_freshness_hours=int(fresh_h), retention_days=int(retention))
+                                offline=offline, db_freshness_hours=int(fresh_h), retention_days=int(retention),
+                                skip_dirs=_lines(scan_skip))
             data["trivy"].update(enabled=trivy_on, scan_types=trivy_types, scanners=trivy_scanners,
                                  generate_sbom=sbom)
             data["gitleaks"].update(enabled=gl_on, modes=gl_modes, config_path=gl_cfg.strip() or None,

@@ -33,6 +33,21 @@ Planned from `config.yaml`:
 Optional flags (`--quiet`, `--no-progress`, `--skip-version-check`, offline flags, …) are only added when the
 installed tool's `--help` lists them. Gitleaks syntax above was verified against 8.30.1.
 
+## Folders skipped inside repositories
+`scan.skip_dirs` (default `.venv, venv, node_modules, __pycache__, .tox, .mypy_cache, .pytest_cache,
+.ruff_cache`) lists folder names that Trivy and Gitleaks do not look inside, at any depth. Installed
+dependencies can hold tens of thousands of third-party files: one test repository with a 1.4 GB `.venv`
+took 14 minutes to scan without the skip and 9 seconds with it. Dependencies are still assessed from
+manifests and lockfiles. Set `skip_dirs: []` (or clear it on the Settings page) to scan everything.
+
+How it is applied:
+* Trivy: `--skip-dirs name --skip-dirs **/name`, with Trivy started from inside the repository
+  (Trivy 0.76 on Windows resolves skip patterns against its working directory).
+* Gitleaks: a temporary config that extends your `gitleaks.config_path`, else the repository's own
+  `.gitleaks.toml`, else the Gitleaks defaults, and adds a path allowlist. It is deleted after the scan.
+* Comparison: the skip list is recorded in each run's coverage. Findings inside a skipped folder are
+  never marked RESOLVED; open ones become UNVERIFIED.
+
 ## Status values
 `PENDING`, `RUNNING`, `COMPLETED` (no findings), `COMPLETED_WITH_FINDINGS`, `FAILED` (tool missing/blocked,
 non-zero exit, invalid/missing report), `TIMED_OUT`, `CANCELLED` (Ctrl+C or killed process), `SKIPPED`

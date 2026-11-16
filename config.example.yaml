@@ -21,6 +21,10 @@ scan:
   offline: false              # true = never download DBs; use cached Trivy DB only
   db_freshness_hours: 72      # older DB => STALE warning
   retention_days: 0           # 0 = keep all history; N = prune runs older than N days after each batch
+  skip_dirs: [.venv, venv, node_modules, __pycache__, .tox, .mypy_cache, .pytest_cache, .ruff_cache]
+                              # folders skipped INSIDE repos by Trivy + Gitleaks (installed deps/caches; can be huge).
+                              # Dependencies are still checked via requirements.txt / package-lock.json etc.
+                              # Set to [] to scan everything (much slower).
 
 trivy:
   enabled: true

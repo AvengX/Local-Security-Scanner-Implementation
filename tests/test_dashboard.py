@@ -157,3 +157,20 @@ def test_settings_reject_non_loopback(env) -> None:
         AppConfig.model_validate({"scan": {"severities": ["SEVERE"]}})
     with pytest.raises(ValidationError):
         AppConfig.model_validate({"excluded_dirs": ["a/b"]})
+
+
+def test_dead_running_scan_is_recovered_and_live_one_listed(env) -> None:
+    populate(env)
+    conn = init_db(env.db_path)
+    rid = dao.list_repositories(conn)[0]["id"]
+    dead = dao.create_scan_run(conn, rid, "trivy", "fs", ".", "x", 999999)
+    live = dao.create_scan_run(conn, rid, "gitleaks", "git", ".", "x", os.getpid())
+    from dashboard.common import get_conn, running_jobs
+
+    c = get_conn(env)
+    jobs = running_jobs(c)
+    assert [j["id"] for j in jobs] == [live] and jobs[0]["scanner"] == "gitleaks:git"
+    assert dao.get_scan_run(conn, dead)["status"] == "CANCELLED"
+    at = page_app("repositories").run()
+    assert not at.exception
+    assert any("Scanning now" in i.value for i in at.info)

@@ -100,22 +100,31 @@ class Coverage:
     scan_target: str
     categories: frozenset[str]
     severities: frozenset[str]
+    skip_dirs: frozenset[str] = frozenset()  # folder names the scan did not look inside
 
     def key(self) -> str:
-        return "|".join([
-            self.scanner, self.scan_type, self.scan_target,
-            ",".join(sorted(self.categories)), ",".join(sorted(self.severities)),
-        ])
+        parts = [self.scanner, self.scan_type, self.scan_target,
+                 ",".join(sorted(self.categories)), ",".join(sorted(self.severities))]
+        if self.skip_dirs:
+            parts.append(",".join(sorted(self.skip_dirs)))
+        return "|".join(parts)
 
     @classmethod
     def from_key(cls, key: str) -> "Coverage":
-        scanner, scan_type, target, cats, sevs = key.split("|", 4)
-        return cls(scanner, scan_type, target, frozenset(filter(None, cats.split(","))),
-                   frozenset(filter(None, sevs.split(","))))
+        scanner, scan_type, target, cats, sevs, *rest = key.split("|", 5)
+        split = lambda v: frozenset(filter(None, v.split(",")))  # noqa: E731
+        return cls(scanner, scan_type, target, split(cats), split(sevs), split(rest[0]) if rest else frozenset())
 
-    def covers(self, scanner: str, scan_type: str, scan_target: str, category: str, severity: str) -> bool:
-        return (scanner == self.scanner and scan_type == self.scan_type and scan_target == self.scan_target
-                and category in self.categories and severity in self.severities)
+    def covers(self, scanner: str, scan_type: str, scan_target: str, category: str, severity: str,
+               file_path: str | None = None) -> bool:
+        if not (scanner == self.scanner and scan_type == self.scan_type and scan_target == self.scan_target
+                and category in self.categories and severity in self.severities):
+            return False
+        if file_path and self.skip_dirs:
+            segments = set(file_path.replace("\\", "/").split("/")[:-1])
+            if segments & self.skip_dirs:
+                return False  # the scan did not look inside this folder, so it cannot confirm a fix
+        return True
 
 
 def deduplicate(findings: list[NormalizedFinding]) -> list[NormalizedFinding]:

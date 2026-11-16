@@ -36,7 +36,7 @@ Fake credentials are generated randomly on each run, belong to no account, and a
 `vapt_lab\lab_secrets.json` only so the leak audit can search for them. Dependencies are never installed
 or executed; IaC is never deployed.
 
-## Checks (43)
+## Checks (45)
 1. **Health**: Trivy and Gitleaks runnable, Trivy DB cached and fresh.
 2. **Discovery**: all 4 repositories found.
 3. **Scan**: `scan-all` exits 0; 20 runs (4 repos × Trivy fs/config/SBOM + Gitleaks git/dir) all succeed;
@@ -44,7 +44,8 @@ or executed; IaC is never deployed.
 4. **Detection**: specific CVEs (e.g. CVE-2023-32681 in requests, lodash CVEs), CRITICAL/HIGH present,
    misconfigurations in each IaC file (privileged pod, open security group/public S3), secrets via both
    Gitleaks and Trivy, history-only secret found by `git` mode but not `dir` mode, revoke-and-rotate
-   remediation, zero findings in the clean repo, SBOMs generated, no duplicate findings.
+   remediation, zero findings in the clean repo, SBOMs generated, no duplicate findings, a secret planted
+   inside an untracked `.venv` is skipped by both scanners, working-tree paths are repository-relative.
 5. **Remediation**: upgrade `requests`, rescan one repo → the CVE becomes RESOLVED, the history secret stays
    OPEN, unfixed CVEs stay OPEN.
 6. **Offline**: `scan-all --offline` succeeds with the cached DB, runs flagged offline, still detects CVEs.
@@ -52,7 +53,7 @@ or executed; IaC is never deployed.
 8. **Leak audit**: no planted secret value anywhere in the database, raw reports, exports or logs.
 
 ## Reference run (2026-11-16, Trivy 0.76.2, Gitleaks 8.30.1, Windows 11)
-43/43 PASS. Highlights: 4 vulnerable Python packages (11 CRITICAL/HIGH), 6 lodash advisories,
+45/45 PASS. Highlights: 4 vulnerable Python packages (11 CRITICAL/HIGH), 6 lodash advisories,
 66 IaC misconfigurations (Dockerfile 10, Kubernetes 40, Terraform 16), secrets detected by both scanners,
 0 findings in the clean repository, 0 secret leaks.
 

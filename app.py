@@ -20,7 +20,7 @@ st.set_page_config(page_title="Local Security Scanner", page_icon=":material/shi
                    initial_sidebar_state="expanded")
 
 from dashboard import findings, history, overview, reports, repositories, settings  # noqa: E402
-from dashboard.common import PAGES, get_config, get_conn, inject_css  # noqa: E402
+from dashboard.common import PAGES, get_config, get_conn, inject_css, running_jobs  # noqa: E402
 from utils.logger import setup_logging  # noqa: E402
 
 
@@ -55,9 +55,10 @@ def main() -> None:
         st.markdown("### :material/shield_lock: Local Security Scanner")
         st.caption("Trivy + Gitleaks · local-first · 127.0.0.1 only")
         conn = get_conn(cfg)
-        running = conn.execute("SELECT COUNT(*) FROM scan_runs WHERE status='RUNNING'").fetchone()[0]
-        if running:
-            st.info(f"{running} scan job(s) running", icon=":material/progress_activity:")
+        jobs = running_jobs(conn)
+        if jobs:
+            st.info("Scanning: " + "; ".join(f"{j['repository']} ({j['scanner']}, {j['elapsed']})" for j in jobs),
+                    icon=":material/progress_activity:")
         st.caption(f"Offline mode: **{'ON' if cfg.scan.offline else 'OFF'}**")
     nav.run()
 

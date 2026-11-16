@@ -190,6 +190,11 @@ class Vapt:
                    any(r["file_path"] == "app/settings.py" for r in gl_git))
         self.r.add("4 Detection", "Secrets: history-only token NOT reported by working-tree scan",
                    not any(r["file_path"] == "app/settings.py" for r in gl_dir))
+        venv_hits = f("vuln-python-app", "file_path LIKE '%.venv%'")
+        self.r.add("4 Detection", "Installed-dependency folder (.venv) skipped by Trivy and Gitleaks", not venv_hits,
+                   f"{len(venv_hits)} findings inside .venv")
+        self.r.add("4 Detection", "Working-tree secret paths are repository-relative",
+                   all(not (r["file_path"] or "").startswith(("C:", "D:", "/")) for r in gl_dir))
         tr_sec = f("vuln-python-app", "scanner='trivy' AND category='SECRET'")
         self.r.add("4 Detection", "Secrets: Trivy secret scanner also detects planted credentials", bool(tr_sec),
                    ", ".join(sorted({r["rule_id"] for r in tr_sec})))

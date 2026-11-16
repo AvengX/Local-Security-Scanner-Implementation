@@ -66,7 +66,7 @@ Or from the command line:
 ### 6. Confirm everything works on the new PC (optional, recommended)
 ```powershell
 .\.venv\Scripts\python.exe -m pytest                              # automated tests
-powershell -ExecutionPolicy Bypass -File .\scripts\run_vapt_test.ps1   # 43-check end-to-end test
+powershell -ExecutionPolicy Bypass -File .\scripts\run_vapt_test.ps1   # 45-check end-to-end test
 ```
 
 ## Troubleshooting on a new PC

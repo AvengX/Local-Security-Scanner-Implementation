@@ -4,7 +4,7 @@
 .DESCRIPTION
     1. Builds vapt_lab\targets (4 disposable Git repos: vulnerable Python, vulnerable Node, insecure IaC, clean).
     2. Drives the real application CLI: health, discover, scan-all, scan-repo, offline scan-all, report, status.
-    3. Verifies 43 PASS/FAIL checks and writes vapt_lab\VAPT_TEST_RESULTS.md (+ .json).
+    3. Verifies 45 PASS/FAIL checks and writes vapt_lab\VAPT_TEST_RESULTS.md (+ .json).
     Everything stays on this machine. The lab and its results are recreated on every run.
 .PARAMETER UpdateDb
     Refresh the Trivy vulnerability DB first (needs internet).

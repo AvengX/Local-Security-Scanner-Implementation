@@ -15,6 +15,12 @@ DEFAULT_EXCLUDES: list[str] = [
     "node_modules", ".venv", "venv", "dist", "build", ".next", ".nuxt", "__pycache__",
     ".idea", ".vscode", "coverage", "reports", "logs",
 ]
+# Folders skipped INSIDE repositories while scanning (installed dependencies and caches). These can hold
+# tens of thousands of third-party files and make scans take a very long time. Dependencies are still
+# assessed from manifests/lockfiles (requirements.txt, package-lock.json, poetry.lock, ...).
+DEFAULT_SCAN_SKIP_DIRS: list[str] = [
+    ".venv", "venv", "node_modules", "__pycache__", ".tox", ".mypy_cache", ".pytest_cache", ".ruff_cache",
+]
 
 
 class _Strict(BaseModel):
@@ -34,6 +40,13 @@ class ScanConfig(_Strict):
     offline: bool = False
     db_freshness_hours: int = Field(72, ge=1, le=24 * 90)
     retention_days: int = Field(0, ge=0, le=3650, description="0 keeps history forever")
+    skip_dirs: list[str] = Field(default_factory=lambda: list(DEFAULT_SCAN_SKIP_DIRS),
+                                 description="Folder names skipped inside repositories by Trivy and Gitleaks")
+
+    @field_validator("skip_dirs")
+    @classmethod
+    def _skip(cls, value: list[str]) -> list[str]:
+        return list(dict.fromkeys(v.validate_dir_name(x) for x in value))
 
     @field_validator("severities")
     @classmethod

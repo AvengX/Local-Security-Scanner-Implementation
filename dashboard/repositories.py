@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import streamlit as st
 
-from dashboard.common import (PAGES, empty_state, fmt_ts, get_config, get_conn, launch_background, page_header)
+from dashboard.common import (PAGES, empty_state, fmt_ts, get_config, get_conn, launch_background, page_header,
+                              running_jobs)
 from database import repositories as dao
 from services import analytics_service as an
 
@@ -17,7 +18,8 @@ def render() -> None:
     if not cfg.repository_roots:
         st.warning("No repository roots configured. Add them on the Settings page.", icon=":material/settings:")
 
-    running = conn.execute("SELECT COUNT(*) FROM scan_runs WHERE status='RUNNING'").fetchone()[0]
+    jobs = running_jobs(conn)
+    running = len(jobs)
     a1, a2, a3, a4 = st.columns([1, 1, 1, 2])
     if a1.button("Discover repositories", icon=":material/travel_explore:", width="stretch",
                  disabled=not cfg.repository_roots):
@@ -35,7 +37,8 @@ def render() -> None:
         pid = launch_background(["scan-all", "--offline" if offline else "--online"], cfg)
         st.toast(f"Scan-all started in the background (pid {pid}). Progress appears in Scan History.")
     if running:
-        a4.info(f"{running} scan job(s) running — refresh to update.", icon=":material/progress_activity:")
+        lines = "  \n".join(f"**{j['repository']}** · {j['scanner']} · {j['elapsed']}" for j in jobs)
+        a4.info(f"Scanning now — refresh to update:  \n{lines}", icon=":material/progress_activity:")
     if a4.button("Refresh", icon=":material/refresh:"):
         st.rerun()
 

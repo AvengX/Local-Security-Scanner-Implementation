@@ -130,7 +130,7 @@ randomly generated fake tokens (never real credentials) and are skipped if a too
 .\scripts\run_vapt_test.ps1 -Dashboard
 ```
 Builds a lab of intentionally vulnerable repositories, scans it with the real application and verifies
-43 PASS/FAIL checks (CVEs, IaC misconfigurations, secrets incl. Git history, false positives, remediation,
+45 PASS/FAIL checks (CVEs, IaC misconfigurations, secrets incl. Git history, false positives, remediation,
 offline mode, reports, secret-leak audit). Scope and details: [docs/VAPT_TEST.md](docs/VAPT_TEST.md).
 
 ### Sharing with someone else

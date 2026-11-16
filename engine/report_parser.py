@@ -6,6 +6,7 @@ Secret values are never copied: Trivy ``Match``/``Code`` and Gitleaks ``Secret``
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -127,12 +128,23 @@ def _trivy_license(lic: dict, target: str, scan_type: str, scan_target: str) -> 
 
 
 # ------------------------------------------------------------------------------------------ Gitleaks
-def parse_gitleaks_report(path: Path, scan_type: str = "git") -> list[NormalizedFinding]:
+def parse_gitleaks_report(path: Path, scan_type: str = "git", base: Path | None = None) -> list[NormalizedFinding]:
     data = _load_json(path)
-    return parse_gitleaks_data(data, scan_type=scan_type)
+    return parse_gitleaks_data(data, scan_type=scan_type, base=base)
 
 
-def parse_gitleaks_data(data: Any, scan_type: str = "git") -> list[NormalizedFinding]:
+def _relative_to_base(file_path: str | None, base: Path | None) -> str | None:
+    """Gitleaks 'dir' mode reports absolute paths; make them repository-relative like 'git' mode and Trivy."""
+    if not file_path or base is None or not os.path.isabs(file_path):
+        return file_path
+    try:
+        rel = os.path.relpath(file_path, base)
+    except ValueError:  # different drive
+        return file_path
+    return file_path if rel.startswith("..") else rel
+
+
+def parse_gitleaks_data(data: Any, scan_type: str = "git", base: Path | None = None) -> list[NormalizedFinding]:
     if data is None:
         return []
     if not isinstance(data, list):
@@ -142,7 +154,7 @@ def parse_gitleaks_data(data: Any, scan_type: str = "git") -> list[NormalizedFin
         if not isinstance(item, dict):
             raise ReportParseError("Unexpected Gitleaks finding entry (expected an object)")
         rule = item.get("RuleID")
-        file_path = item.get("File")
+        file_path = _relative_to_base(item.get("File"), base)
         line = item.get("StartLine") or None
         commit = item.get("Commit") or ""
         # Never read item["Secret"] / item["Match"].

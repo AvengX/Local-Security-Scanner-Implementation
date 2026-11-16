@@ -1,5 +1,9 @@
 """Trivy wrapper: filesystem (vuln/misconfig/secret/license), config, image scans and SBOM generation.
 
+Working directory: filesystem scans run with the repository as the working directory and target ".".
+Trivy (verified on 0.76, Windows) resolves relative --skip-dirs patterns against the working directory,
+so an absolute target path would silently disable skipping.
+
 Exit-code semantics: we never pass ``--exit-code`` with a non-zero value, so Trivy exits 0 whether or not
 findings exist. Any non-zero exit therefore means an execution error. Findings are determined solely from
 the parsed JSON report.
@@ -141,10 +145,10 @@ class TrivyScanner:
         return True
 
     def _execute(self, ex: ScanExecution, args: list[str], report: Path, opts: TrivyOptions,
-                 parse: bool = True) -> ScanExecution:
+                 parse: bool = True, cwd: Path | None = None) -> ScanExecution:
         ex.command = args
         ex.report_path = str(report)
-        outcome = run_process(args, timeout=opts.timeout + 120, tool="trivy")
+        outcome = run_process(args, timeout=opts.timeout + 120, tool="trivy", cwd=cwd)
         ex.started_at, ex.finished_at, ex.duration = outcome.started_at, outcome.finished_at, outcome.duration
         ex.exit_code = outcome.exit_code
         if outcome.launch_error:
@@ -182,13 +186,13 @@ class TrivyScanner:
         ex = self._base("fs", ".", opts)
         if not self._preflight(ex, opts, needs_db="vuln" in opts.scanners):
             return ex
-        return self._execute(ex, self.build_fs_command(target, report, opts), report, opts)
+        return self._execute(ex, self.build_fs_command(Path("."), report, opts), report, opts, cwd=target)
 
     def scan_config(self, target: Path, report: Path, opts: TrivyOptions) -> ScanExecution:
         ex = self._base("config", ".", opts)
         if not self._preflight(ex, opts, needs_db=False):
             return ex
-        return self._execute(ex, self.build_config_command(target, report, opts), report, opts)
+        return self._execute(ex, self.build_config_command(Path("."), report, opts), report, opts, cwd=target)
 
     def scan_image(self, image: str, report: Path, opts: TrivyOptions) -> ScanExecution:
         ex = self._base("image", image, opts)
@@ -203,7 +207,8 @@ class TrivyScanner:
         ex = self._base("sbom", ".", opts, coverage=False)
         if not self._preflight(ex, opts, needs_db=False):
             return ex
-        return self._execute(ex, self.build_sbom_command(target, report, opts), report, opts, parse=False)
+        return self._execute(ex, self.build_sbom_command(Path("."), report, opts), report, opts, parse=False,
+                             cwd=target)
 
     def update_databases(self, cache_dir: str | None, timeout: int = 1800) -> list[tuple[str, bool, str]]:
         results: list[tuple[str, bool, str]] = []

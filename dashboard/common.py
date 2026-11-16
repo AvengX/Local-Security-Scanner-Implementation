@@ -72,7 +72,28 @@ def get_config() -> AppConfig:
 def get_conn(cfg: AppConfig | None = None) -> sqlite3.Connection:
     cfg = cfg or get_config()
     cfg.ensure_dirs()
-    return _conn_for(str(cfg.db_path))
+    conn = _conn_for(str(cfg.db_path))
+    # A RUNNING row whose process has died would otherwise show as "running" forever.
+    from database.repositories import recover_orphaned_runs
+
+    recover_orphaned_runs(conn)
+    return conn
+
+
+def running_jobs(conn: sqlite3.Connection) -> list[dict[str, Any]]:
+    """Scanner runs currently in progress, with elapsed time."""
+    from datetime import datetime, timezone
+
+    out = []
+    for r in conn.execute("SELECT s.id, r.name, s.scanner, s.scan_type, s.started_at FROM scan_runs s "
+                          "JOIN repositories r ON r.id=s.repository_id WHERE s.status='RUNNING' ORDER BY s.id"):
+        try:
+            secs = int((datetime.now(timezone.utc) - datetime.fromisoformat(r["started_at"])).total_seconds())
+        except (TypeError, ValueError):
+            secs = 0
+        out.append({"id": r["id"], "repository": r["name"], "scanner": f"{r['scanner']}:{r['scan_type']}",
+                    "elapsed": f"{secs // 60}m {secs % 60:02d}s"})
+    return out
 
 
 def get_freshness(cfg: AppConfig) -> DbFreshness:

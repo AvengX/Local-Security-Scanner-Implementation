@@ -102,7 +102,7 @@ def apply_scan_results(conn: sqlite3.Connection, repo_id: int, run_id: int, cove
                 continue
             fid = int(row["id"])
             if coverage.covers(row["scanner"], row["scan_type"], row["scan_target"], row["category"],
-                               row["severity"]):
+                               row["severity"], row["file_path"]):
                 conn.execute("UPDATE findings SET status='RESOLVED', resolved_at=? WHERE id=?", (now, fid))
                 result.resolved.append(fid)
                 _record(conn, run_id, fid, "RESOLVED", row["severity"], now)

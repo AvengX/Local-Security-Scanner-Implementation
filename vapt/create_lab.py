@@ -35,6 +35,7 @@ def fake_secrets() -> dict[str, str]:
         "aws_secret_access_key": _rand(string.ascii_letters + string.digits + "/+", 40),
         "github_pat_current": "ghp_" + _rand(string.ascii_letters + string.digits, 36),
         "github_pat_history": "ghp_" + _rand(string.ascii_letters + string.digits, 36),
+        "github_pat_venv": "ghp_" + _rand(string.ascii_letters + string.digits, 36),
     }
 
 
@@ -156,6 +157,9 @@ def create_lab(lab_dir: Path) -> dict[str, object]:
                 "app/github.py": f'TOKEN = "{s["github_pat_current"]}"\n'})
     _git(py, "add", "-A")
     _git(py, "commit", "-qm", "add cloud client")
+    # Untracked installed-dependency folder (as a real virtualenv would be): must be skipped by scans.
+    _write(py, {".gitignore": ".venv/\n",
+                ".venv/Lib/site-packages/thirdparty/config.py": f'TOKEN = "{s["github_pat_venv"]}"\n'})
 
     # 2. Node app: vulnerable lodash / minimist in package-lock.json.
     _new_repo(targets, "vuln-node-app", {

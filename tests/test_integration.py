@@ -270,3 +270,63 @@ def test_schedule_command_handles_long_and_quoted_paths(monkeypatch) -> None:
     assert len(script) > 261 and "O''Brien" in script and "-Daily -At '02:00'" in script
     with pytest.raises(ValueError):
         sch.build_create_command("daily", "25:00")
+
+
+# ----------------------------------------------------------------------------- scan skip folders
+def test_trivy_receives_root_and_nested_skip_globs(cfg, roots: Path, monkeypatch, all_flags, trivy_db) -> None:
+    make_repo(roots / "A")
+    cfg.gitleaks.enabled = False
+    cfg.scan.skip_dirs = [".venv", "node_modules"]
+    runner = fake_process({"SchemaVersion": 2, "Results": []})
+    monkeypatch.setattr("engine.trivy_scanner.run_process", runner)
+    ScanOrchestrator(cfg, trivy_tool=tool("trivy")).scan_all()
+    args = runner.calls[0]
+    skipped = [args[i + 1] for i, a in enumerate(args) if a == "--skip-dirs"]
+    assert {".venv", "**/.venv", "node_modules", "**/node_modules"} <= set(skipped)
+
+
+def test_gitleaks_config_preserves_repo_and_user_configs(cfg, roots: Path, tmp_path: Path) -> None:
+    repo = make_repo(roots / "A")
+    orch = ScanOrchestrator(cfg, gitleaks_tool=tool("gitleaks"))
+    report = cfg.reports_dir / "r.json"
+    text = Path(orch._gitleaks_config(repo, report)).read_text(encoding="utf-8")
+    assert "useDefault = true" in text and r"\.venv" in text and "node_modules" in text
+    (repo / ".gitleaks.toml").write_text("[extend]\nuseDefault = true\n", encoding="utf-8")
+    assert f"path = '''{(repo / '.gitleaks.toml').as_posix()}'''" in Path(orch._gitleaks_config(repo, report)).read_text()
+    user = tmp_path / "mine.toml"
+    user.write_text("[extend]\nuseDefault = true\n", encoding="utf-8")
+    cfg.gitleaks.config_path = str(user)
+    assert user.as_posix() in Path(orch._gitleaks_config(repo, report)).read_text()
+    cfg.scan.skip_dirs = []
+    assert orch._gitleaks_config(repo, report) == str(user)  # nothing to add -> user's file unchanged
+
+
+def test_gitleaks_absolute_paths_made_relative(tmp_path: Path) -> None:
+    from engine.report_parser import parse_gitleaks_data
+
+    item = dict(load_fixture("gitleaks.json")[0], File=str(tmp_path / "app" / "x.py"), Commit="")
+    [f] = parse_gitleaks_data([item], scan_type="dir", base=tmp_path)
+    assert f.file_path == "app/x.py"
+    [g] = parse_gitleaks_data([item], scan_type="dir", base=tmp_path / "other")
+    assert g.file_path.endswith("x.py")  # outside base: left as reported
+
+
+@needs_gitleaks
+@pytest.mark.realtools
+def test_real_dependency_folders_skipped(cfg, roots: Path) -> None:
+    from conftest import have_trivy
+    from engine.scanner_health import check_trivy
+
+    repo = make_repo(roots / "proj", {"app/main.py": f'T = "{fake_github_token()}"\n'})
+    for rel in (".venv/Lib/site-packages/leak.py", "web/node_modules/pkg/leak.js", "sub/.venv/leak.py"):
+        (repo / rel).parent.mkdir(parents=True, exist_ok=True)
+        (repo / rel).write_text(f'T = "{fake_github_token()}"\n', encoding="utf-8")
+    cfg.gitleaks.modes = ["dir"]
+    cfg.trivy.enabled = have_trivy()
+    orch = ScanOrchestrator(cfg, trivy_tool=check_trivy() if cfg.trivy.enabled else None,
+                            gitleaks_tool=check_gitleaks())
+    batch = orch.scan_all()
+    assert all(r.status in ("COMPLETED", "COMPLETED_WITH_FINDINGS") for r in batch.runs), batch.runs
+    paths = {r[0] for r in orch.connect().execute("SELECT file_path FROM findings WHERE category='SECRET'")}
+    assert paths == {"app/main.py"}, paths
+    assert not list((cfg.data_dir / "tmp").glob("*.toml"))  # generated config cleaned up
