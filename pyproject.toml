@@ -1,0 +1,16 @@
+[project]
+name = "local-security-scanner"
+version = "1.0.0"
+description = "Local-first multi-repository security scanner (Trivy + Gitleaks) with a Streamlit dashboard"
+requires-python = ">=3.12"
+readme = "README.md"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = [".", "tests"]
+addopts = "-ra"
+markers = [
+    "realtools: tests that execute the real installed Gitleaks/Trivy binaries (skipped if unavailable)",
+]
+filterwarnings = ["ignore::DeprecationWarning"]
+

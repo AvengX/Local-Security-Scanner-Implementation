@@ -1,0 +1,45 @@
+{
+  "SchemaVersion": 2,
+  "CreatedAt": "2026-11-16T10:00:00Z",
+  "ArtifactName": "demo",
+  "ArtifactType": "filesystem",
+  "Results": [
+    {
+      "Target": "requirements.txt",
+      "Class": "lang-pkgs",
+      "Type": "pip",
+      "Vulnerabilities": [
+        {"VulnerabilityID": "CVE-2023-32681", "PkgName": "requests", "PkgID": "requests@2.25.0",
+         "InstalledVersion": "2.25.0", "FixedVersion": "2.31.0", "Status": "fixed", "Severity": "MEDIUM",
+         "Title": "Unintended leak of Proxy-Authorization header", "Description": "Requests forwards proxy auth.",
+         "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2023-32681", "DataSource": {"Name": "GitHub Security Advisory pip"}},
+        {"VulnerabilityID": "CVE-2024-0001", "PkgName": "jinja2", "InstalledVersion": "2.10", "FixedVersion": "",
+         "Severity": "CRITICAL", "Title": "Template injection", "Description": "Example."},
+        {"VulnerabilityID": "CVE-2024-0001", "PkgName": "jinja2", "InstalledVersion": "2.10", "FixedVersion": "",
+         "Severity": "CRITICAL", "Title": "Template injection (duplicate entry)", "Description": "Example."}
+      ]
+    },
+    {
+      "Target": "Dockerfile",
+      "Class": "config",
+      "Type": "dockerfile",
+      "Misconfigurations": [
+        {"Type": "Dockerfile Security Check", "ID": "DS002", "AVDID": "AVD-DS-0002", "Title": "Image user should not be 'root'",
+         "Message": "Specify at least 1 USER command in Dockerfile", "Resolution": "Add 'USER <non root user name>' line",
+         "Severity": "HIGH", "PrimaryURL": "https://avd.aquasec.com/misconfig/ds002", "Status": "FAIL",
+         "CauseMetadata": {"Provider": "Dockerfile", "Service": "general", "StartLine": 1, "EndLine": 3}},
+        {"Type": "Dockerfile Security Check", "ID": "DS001", "AVDID": "AVD-DS-0001", "Title": "':latest' tag used",
+         "Severity": "MEDIUM", "Status": "PASS", "CauseMetadata": {}}
+      ]
+    },
+    {
+      "Target": "config/settings.py",
+      "Class": "secret",
+      "Secrets": [
+        {"RuleID": "github-pat", "Category": "GitHub", "Severity": "CRITICAL", "Title": "GitHub Personal Access Token",
+         "StartLine": 4, "EndLine": 4, "Match": "TOKEN = \"ghp_SHOULDNEVERBESTOREDxxxxxxxxxxxxxxxxxxx\"",
+         "Code": {"Lines": [{"Number": 4, "Content": "TOKEN = \"ghp_SHOULDNEVERBESTOREDxxxxxxxxxxxxxxxxxxx\""}]}}
+      ]
+    }
+  ]
+}

@@ -1,0 +1,8 @@
+# Gitleaks config for this repository: default rules, plus an allowlist for the intentionally fake
+# tokens used by the parser test fixtures. Real secrets anywhere else are still reported.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Fake, non-functional tokens in test fixtures"
+paths = ['''^tests/fixtures/.*\.json$''']

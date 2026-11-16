@@ -1,0 +1,49 @@
+# Local Security Scanner configuration.
+# Copy to config.yaml (install.ps1 / `python run_scan.py init` does this without overwriting).
+# Windows paths: use single quotes or forward slashes in YAML, e.g. 'D:\Projects' or D:/Projects
+
+repository_roots: []          # e.g. ['D:\Projects', 'C:\Work\repos']
+excluded_dirs: [node_modules, .venv, venv, dist, build, .next, .nuxt, __pycache__, .idea, .vscode, coverage, reports, logs]
+max_depth: 10                 # how deep to search below each root
+follow_symlinks: false        # never follow directory symlinks/junctions by default
+capture_git_metadata: true    # read current branch + HEAD commit (read-only git commands)
+log_level: INFO
+
+paths:                        # relative paths are resolved against the project folder
+  data_dir: data              # SQLite database + lock files
+  reports_dir: reports        # raw Trivy/Gitleaks JSON reports + exports
+  logs_dir: logs
+
+scan:
+  timeout_seconds: 1800       # per scanner invocation
+  concurrency: 1              # repositories scanned in parallel (1-8)
+  severities: [CRITICAL, HIGH, MEDIUM, LOW, UNKNOWN]
+  offline: false              # true = never download DBs; use cached Trivy DB only
+  db_freshness_hours: 72      # older DB => STALE warning
+  retention_days: 0           # 0 = keep all history; N = prune runs older than N days after each batch
+
+trivy:
+  enabled: true
+  executable: null            # null = auto-detect (PATH, winget, scoop, choco)
+  cache_dir: null             # null = Trivy default (%LOCALAPPDATA%\trivy)
+  scan_types: [fs]            # fs (vuln/misconfig/secret/license via `scanners`) and/or config
+  scanners: [vuln, misconfig, secret]   # add `license` for license findings
+  skip_dirs: []               # glob patterns passed to --skip-dirs, e.g. ['**/testdata']
+  generate_sbom: false        # write a CycloneDX SBOM per repository per scan
+  images: {}                  # repository name -> list of local/remote image refs, e.g. {Backend: ['backend:latest']}
+
+gitleaks:
+  enabled: true
+  executable: null
+  modes: [git, dir]           # git = commit history, dir = current working tree (incl. untracked files)
+  config_path: null           # custom gitleaks.toml (allowlists etc.)
+  log_opts: null              # e.g. '--all' to scan every branch
+  max_target_megabytes: null  # skip files larger than this
+
+dashboard:
+  host: 127.0.0.1             # loopback only; other values are rejected
+  port: 8501
+
+schedule:
+  time: '02:00'
+  weekly_day: SUN

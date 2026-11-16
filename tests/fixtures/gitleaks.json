@@ -1,0 +1,7 @@
+[
+  {"Description": "GitHub Personal Access Token", "StartLine": 3, "EndLine": 3, "StartColumn": 9, "EndColumn": 48,
+   "Match": "token = ghp_SHOULDNEVERBESTOREDyyyyyyyyyyyyyyyyyyy", "Secret": "ghp_SHOULDNEVERBESTOREDyyyyyyyyyyyyyyyyyyy",
+   "File": "app/config.py", "SymlinkFile": "", "Commit": "a1b2c3d4e5f6a7b8c9d0a1b2c3d4e5f6a7b8c9d0", "Entropy": 4.7,
+   "Author": "Test User", "Email": "test@example.invalid", "Date": "2026-11-01T10:00:00Z", "Message": "add config",
+   "Tags": [], "RuleID": "github-pat", "Fingerprint": "a1b2c3d4e5f6a7b8c9d0a1b2c3d4e5f6a7b8c9d0:app/config.py:github-pat:3"}
+]
