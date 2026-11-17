@@ -429,3 +429,21 @@ def test_overview_has_plain_project_table_not_charts(env) -> None:
     text = " ".join(m.value for m in at.markdown)
     assert "Problems by project" in text and "Vulnerable libraries" in text
     assert "Severity breakdown" not in text
+
+
+def test_findings_repository_filter_lists_clean_repositories(env) -> None:
+    populate(env)
+    conn = init_db(env.db_path)
+    clean_dir = Path(env.repository_roots[0]) / "CleanOne"
+    clean_dir.mkdir(exist_ok=True)
+    dao.sync_discovered(conn, [DiscoveredRepo("Phoenix", str(Path(env.repository_roots[0]) / "Phoenix"),
+                                              env.repository_roots[0]),
+                               DiscoveredRepo("CleanOne", str(clean_dir), env.repository_roots[0])],
+                        env.repository_roots)
+    conn.close()
+    at = page_app("findings").run()
+    box = at.multiselect(key="all_repo")
+    assert set(box.options) >= {"Phoenix", "CleanOne (none found)"}
+    box.select("CleanOne").run()
+    text = " ".join(m.value for m in at.markdown)
+    assert "No findings in CleanOne" in text

@@ -149,7 +149,11 @@ def render_findings(kind: str) -> None:
     prefill_q = st.session_state.pop("findings_q", None)
     if prefill_q:
         st.session_state[f"{kind}_q"] = prefill_q
-    pre_repo = [r for r in st.session_state.pop("findings_repo", []) if r in set(df["repository"])]
+    # Every monitored repository is selectable — also the ones with nothing to show on this page.
+    all_repos = sorted({*(r[0] for r in conn.execute("SELECT name FROM repositories WHERE active=1")),
+                        *df["repository"].unique().tolist()}, key=str.lower)
+    with_findings = set(df["repository"])
+    pre_repo = [r for r in st.session_state.pop("findings_repo", []) if r in all_repos]
     if pre_repo:
         st.session_state[f"{kind}_repo"] = pre_repo
 
@@ -162,8 +166,8 @@ def render_findings(kind: str) -> None:
         pkg = s3.text_input("File" if by_file else "Package", key=f"{kind}_pkg",
                             placeholder={"secret": ".env", "misconf": "Dockerfile"}.get(kind, "openssl"))
         f1, f2, f3, f4, f5 = st.columns(5)
-        repos = sorted(df["repository"].unique().tolist())
-        sel_repo = f1.multiselect("Repository", repos, key=f"{kind}_repo")
+        sel_repo = f1.multiselect("Repository", all_repos, key=f"{kind}_repo",
+                                  format_func=lambda r: r if r in with_findings else f"{r} (none found)")
         sel_sev = f2.multiselect("Severity", list(SEVERITIES), key=f"{kind}_sev")
         # Toggle chips instead of a dropdown: every option stays fully readable however narrow the column is.
         sel_status = f3.pills("Status", ["OPEN", "UNVERIFIED", "RESOLVED"], selection_mode="multi",
@@ -203,7 +207,16 @@ def render_findings(kind: str) -> None:
                  f"<b>{counts.get(s, 0)}</b></span>" for s in SEVERITIES) +
          f"<span class='lss-chip'>{len(view)} of {len(df)} findings</span></div>")
     if view.empty:
-        notice("neutral", "No findings match the current filters", "Clear a filter or widen the date range.")
+        clean = [r for r in sel_repo if r not in with_findings]
+        if clean and len(clean) == len(sel_repo):
+            what = {"all": "findings", "vuln": "vulnerabilities", "secret": "secrets",
+                    "misconf": "misconfigurations"}[kind]
+            notice("ok", f"No {what} in {', '.join(clean)}",
+                   f"The scanners have never reported any {what} for {'this project' if len(clean) == 1 else 'these projects'}."
+                   + (" See “What was checked in each project” above for what could be checked."
+                      if kind in ("vuln", "misconf") else ""))
+        else:
+            notice("neutral", "No findings match the current filters", "Clear a filter or widen the date range.")
         return
 
     display = _display_frame(conn, view, kind)
