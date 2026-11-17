@@ -1,4 +1,4 @@
-"""Design system: palette, global CSS, inline SVG icons, HTML components and Plotly styling.
+"""Design system: palette, global CSS, inline SVG icons, HTML components.
 
 All scanner-derived text passed to these helpers is HTML-escaped. Nothing here loads remote assets
 (fonts, icons and images are local), so the dashboard stays fully offline.
@@ -150,29 +150,6 @@ def safe_url(url: Any) -> str | None:
     return u if u.lower().startswith(("https://", "http://")) and " " not in u else None
 
 
-# ----------------------------------------------------------------------------------------------- plotly
-def style_fig(fig: Any, height: int = 300, title: str | None = None, legend: bool = True) -> Any:
-    custom_legend = fig.layout.legend.y is not None and fig.layout.legend.y < 0
-    fig.update_layout(
-        template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", height=height,
-        margin=dict(l=8, r=8, t=44 if title else 12, b=8),
-        title=dict(text=title, font=dict(size=14, color="#E2E8F0"), x=0, xanchor="left", y=0.98) if title else None,
-        font=dict(family="Segoe UI Variable Text, Segoe UI, system-ui, sans-serif", size=12, color=MUTED),
-        showlegend=legend,
-        legend=dict(font=dict(size=11), bgcolor="rgba(0,0,0,0)", title=None) if custom_legend else
-        dict(orientation="h", yanchor="bottom", y=1.0, xanchor="right", x=1, font=dict(size=11),
-             bgcolor="rgba(0,0,0,0)", title=None),
-        hoverlabel=dict(bgcolor=ELEVATED, bordercolor=BORDER, font=dict(color=TEXT, size=12)),
-        bargap=0.35,
-    )
-    fig.update_xaxes(gridcolor="#1A2740", zerolinecolor="#1A2740", linecolor="#22314A", title=None)
-    fig.update_yaxes(gridcolor="#1A2740", zerolinecolor="#1A2740", linecolor="#22314A", title=None)
-    return fig
-
-
-PLOTLY_CONFIG: dict[str, Any] = {"displayModeBar": False, "responsive": True}
-
-
 # --------------------------------------------------------------------------------------------------- CSS
 CSS = """
 <style>
@@ -225,7 +202,6 @@ div[class*="st-key-panel"] { background: linear-gradient(180deg, rgba(25,38,58,.
 [data-testid="stTabs"] [role="tablist"] { gap: .25rem; border-bottom: 1px solid var(--lss-border); }
 [data-testid="stTabs"] button[role="tab"] { border-radius: 10px 10px 0 0; padding: .45rem .9rem; }
 [data-testid="stExpander"] details { border-radius: 12px; border-color: var(--lss-border); background: rgba(20,31,48,.5); }
-[data-testid="stPlotlyChart"] { border-radius: 12px; }
 [data-testid="stAlert"] { border-radius: 12px; }
 
 /* Top bar */

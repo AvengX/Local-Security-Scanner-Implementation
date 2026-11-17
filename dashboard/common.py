@@ -254,10 +254,6 @@ def section(title: str, caption: str = "") -> None:
     html(t.section_title(title, caption))
 
 
-def chart(fig: Any, height: int = 300, title: str | None = None, legend: bool = True, key: str | None = None) -> None:
-    st.plotly_chart(t.style_fig(fig, height, title, legend), width="stretch", config=t.PLOTLY_CONFIG, key=key)
-
-
 # ----------------------------------------------------------------------------------------- app shell
 def inject_css() -> None:
     st.markdown(t.CSS, unsafe_allow_html=True)

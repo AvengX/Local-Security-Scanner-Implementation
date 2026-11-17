@@ -2,7 +2,6 @@
 # numpy/pandas/pyarrow are pinned to releases whose compiled DLLs are accepted by Windows
 # Smart App Control on the reference machine (newer builds were blocked); see docs/INSTALLATION.md.
 streamlit==1.67.0
-plotly==7.1.0
 pandas==2.3.3
 numpy==2.4.6
 pyarrow==22.0.0

@@ -11,7 +11,7 @@ Set-Location $Root
 $venvPy = Join-Path $Root '.venv\Scripts\python.exe'
 if (-not (Test-Path $venvPy)) { throw 'Virtual environment missing. Run scripts\install.ps1 first.' }
 
-& $venvPy -c "import streamlit, pandas, plotly, pydantic, yaml" 2>$null
+& $venvPy -c "import streamlit, pandas, pydantic, yaml" 2>$null
 if ($LASTEXITCODE -ne 0) { throw 'Dependencies missing or blocked. Run scripts\install.ps1 (see docs/INSTALLATION.md).' }
 
 if ($Config) {

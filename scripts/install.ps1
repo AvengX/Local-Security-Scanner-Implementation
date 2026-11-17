@@ -64,7 +64,7 @@ Info 'Installing pinned dependencies'
 & $venvPy -m pip install --disable-pip-version-check -q --upgrade pip
 & $venvPy -m pip install --disable-pip-version-check -q -r (Join-Path $Root 'requirements.txt')
 if ($LASTEXITCODE -ne 0) { throw 'pip install failed' }
-& $venvPy -c "import streamlit, pandas, plotly, pydantic, yaml; print('dependencies OK')"
+& $venvPy -c "import streamlit, pandas, pydantic, yaml; print('dependencies OK')"
 if ($LASTEXITCODE -ne 0) {
     Warn 'A dependency failed to import. If the error mentions an Application Control policy, Windows Smart App Control blocked a package DLL - see docs/INSTALLATION.md.'
 }
