@@ -33,6 +33,8 @@ def list_reports(conn: sqlite3.Connection, reports_dir: Path, scanner: str | Non
     if repository_id is not None:
         sql += " AND s.repository_id=?"
         params.append(repository_id)
+    else:
+        sql += " AND r.active=1"  # combined scope = monitored repositories only
     sql += " ORDER BY s.id DESC LIMIT ?"
     params.append(limit)
     out: list[ReportEntry] = []

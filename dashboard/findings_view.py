@@ -53,12 +53,17 @@ def render_findings(kind: str) -> None:
         if conn.execute("SELECT COUNT(*) FROM repositories WHERE active=1").fetchone()[0] == 0:
             no_repositories(cfg, conn, f"fv_{kind}")
             return
-        ok_runs = conn.execute("SELECT COUNT(*) FROM scan_runs WHERE status IN "
-                               "('COMPLETED','COMPLETED_WITH_FINDINGS')").fetchone()[0]
+        # Only runs of monitored repositories, and only the scanner that can report this kind of finding.
+        trivy_only = kind in ("vuln", "misconf")
+        ok_runs, ok_repos = conn.execute(
+            "SELECT COUNT(*), COUNT(DISTINCT s.repository_id) FROM scan_runs s JOIN repositories r "
+            "ON r.id=s.repository_id AND r.active=1 WHERE s.status IN ('COMPLETED','COMPLETED_WITH_FINDINGS')"
+            + (" AND s.scanner='trivy'" if trivy_only else "")).fetchone()
         if ok_runs:
+            who = "Trivy scan(s)" if trivy_only else "scanner run(s)"
             notice("ok", f"No {spec['title'].lower()} found",
-                   f"{ok_runs} successful scanner run(s) are recorded and none reported this kind of finding. "
-                   "This is a clean result, not missing data.")
+                   f"{ok_runs} successful {who} across {ok_repos} monitored repositor"
+                   f"{'y' if ok_repos == 1 else 'ies'} reported none. This is a clean result, not missing data.")
         else:
             notice("neutral", "No scan data yet",
                    "No scanner has completed successfully, so there is nothing to show. This does not mean the "
