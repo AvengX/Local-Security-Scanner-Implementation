@@ -38,7 +38,9 @@ SHA-256 fingerprint of those fields only. Gitleaks `Secret`/`Match`/`Email`/`Mes
 
 ## finding_changes
 Per-run comparison outcome: `(scan_run_id, finding_id) UNIQUE`, `change_type ∈ NEW, EXISTING, RESOLVED, UNVERIFIED`,
-`severity`, `changed_at`. Powers trend charts and run-to-run comparisons.
+`severity`, `changed_at`. Powers trend charts, run-to-run comparisons and the per-finding history view.
+Indexes: `(scan_run_id)`, `(change_type, changed_at)` and `(finding_id, scan_run_id)` (added in 1.1 with
+`CREATE INDEX IF NOT EXISTS`, applied automatically on start).
 
 ## repo_locks
 `repository_id PK, pid, acquired_at` — cross-process lock preventing concurrent scans of the same repository.

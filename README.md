@@ -78,7 +78,7 @@ Scheduled scans must be set up separately on each PC. More detail: [docs/SHARING
 | Gitleaks | `git` (history, `--log-opts`) and `dir` (working tree) modes, custom config/allowlists, `--redact` |
 | Orchestration | scan-all / scan-repo, bounded concurrency, per-repo + job locks, timeouts, Ctrl+C cancellation, per-scan isolation, batch summaries |
 | Storage | SQLite with FKs, WAL, transactions, indexes, migrations, duplicate prevention, retention |
-| Dashboard | Overview, Repositories, Findings, Scan History, Reports, Settings — Plotly charts, filters, detail views, empty/error states |
+| Dashboard | Dark security-operations UI: Overview (posture, metrics, trends, recommended actions, health), Security Findings, Vulnerabilities, Secrets, Misconfigurations, Repositories, Scan History, Reports, VAPT Lab, Settings — sidebar health panel, global search, finding history, guided empty/error states. See [docs/UI_GUIDE.md](docs/UI_GUIDE.md) |
 | Reports | Raw JSON per scan, CSV, consolidated JSON, Markdown/HTML summary, per-repository reports |
 | Automation | Windows Task Scheduler (daily/weekly) with explicit confirmation |
 | Offline | Cached DB only, visible freshness/staleness, DB-missing detection |
@@ -145,6 +145,8 @@ See [docs/SCANNING.md](docs/SCANNING.md) for every command, status and rule.
 ```powershell
 .\scripts\start.ps1          # http://127.0.0.1:8501
 ```
+Pages and states are described in [docs/UI_GUIDE.md](docs/UI_GUIDE.md). The latest audit is in
+[docs/AUDIT.md](docs/AUDIT.md).
 
 ## 14. Offline mode
 `scan.offline: true` or `scan-all --offline`. Details: [docs/OFFLINE_MODE.md](docs/OFFLINE_MODE.md).

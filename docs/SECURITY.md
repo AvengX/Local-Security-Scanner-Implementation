@@ -24,6 +24,17 @@
 | 11 | CSV formula injection neutralised | `export_service.findings_csv_bytes` |
 | 12 | Image references validated before use | `utils/security.is_safe_image_ref` |
 | 13 | Git `core.fsmonitor` disabled for metadata reads | `repository_discovery.git_metadata` |
+| 14 | All scanner-derived text HTML-escaped before rendering; descriptions shown as plain text (no Markdown, so no remote images); only `http(s)` reference links | `dashboard/theme.py` (`esc`, `safe_url`), `findings_view._detail` (test: `test_scanner_text_is_escaped_and_unsafe_links_dropped`) |
+| 15 | No remote fonts, icons or scripts; logo and icons are local SVG | `dashboard/assets`, `.streamlit/config.toml` |
+| 16 | `config.yaml` backed up to `data/config_backups/` before every dashboard save or reset | `dashboard/settings.backup_config` |
+
+## Scanner binaries and Smart App Control
+The winget builds of Trivy 0.76.2 and Gitleaks 8.30.1 are **not Authenticode-signed** (`Get-AuthenticodeSignature`
+reports `NotSigned`); Aqua Security signs release archives with cosign and publishes SHA-256 checksums instead.
+Smart App Control may therefore block them. The dashboard shows such a tool as **Blocked by Windows** (red) and
+its scans as FAILED. Safe verification: compare the downloaded archive's SHA-256 with the release's
+`checksums.txt`, or reinstall through winget (which verifies the manifest hash). Only the PC owner should decide to
+allow the binary; the application never changes Windows security settings.
 
 ## Read-only with respect to repositories
 The application never deletes or edits files in scanned repositories, never upgrades packages, never rewrites

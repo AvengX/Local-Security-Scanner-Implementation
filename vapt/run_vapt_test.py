@@ -19,6 +19,7 @@ import argparse
 import json
 import sqlite3
 import subprocess
+import os
 import sys
 import time
 from dataclasses import dataclass, field
@@ -289,13 +290,28 @@ class Vapt:
         lines += [f"| `{c['command']}` | {c['exit']} | {c['seconds']} |" for c in self.r.commands]
         md = self.lab / "VAPT_TEST_RESULTS.md"
         md.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        finished = datetime.now(timezone.utc).isoformat(timespec="seconds")
         (self.lab / "VAPT_TEST_RESULTS.json").write_text(json.dumps(
-            {"passed": passed, "total": total, "checks": [vars(c) for c in self.r.checks],
-             "commands": self.r.commands}, indent=2), encoding="utf-8")
+            {"started": started, "finished": finished, "passed": passed, "total": total,
+             "checks": [vars(c) for c in self.r.checks], "commands": self.r.commands}, indent=2), encoding="utf-8")
+        # One line per run so the dashboard can show historical VAPT results (the lab itself is recreated).
+        failed = [c.name for c in self.r.checks if not c.passed]
+        with open(self.lab / "history.jsonl", "a", encoding="utf-8") as fh:
+            fh.write(json.dumps({"started": started, "finished": finished, "passed": passed, "total": total,
+                                 "failed": failed[:20]}) + "\n")
         return md
 
     def run(self) -> int:
         started = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        self.lab.mkdir(parents=True, exist_ok=True)
+        marker = self.lab / "RUNNING.pid"  # lets the dashboard show that a test is in progress
+        marker.write_text(str(os.getpid()), encoding="utf-8")
+        try:
+            return self._run(started)
+        finally:
+            marker.unlink(missing_ok=True)
+
+    def _run(self, started: str) -> int:
         meta = self.setup()
         secrets: dict[str, str] = meta["secrets"]  # type: ignore[assignment]
         trivy_ok = self.phase_health()

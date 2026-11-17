@@ -9,7 +9,9 @@ a lab of intentionally vulnerable repositories created on the fly.
 .\scripts\run_vapt_test.ps1 -UpdateDb     # refresh the Trivy DB first (internet)
 .\scripts\run_vapt_test.ps1 -Dashboard    # then open the dashboard on the lab results (http://127.0.0.1:8502)
 ```
-Results: `vapt_lab\VAPT_TEST_RESULTS.md` and `.json`. Exit code 0 means all checks passed.
+Results: `vapt_lab\VAPT_TEST_RESULTS.md` and `.json`; one line per run is appended to `vapt_lab\history.jsonl`.
+Exit code 0 means all checks passed. The dashboard's **VAPT Lab** page runs the same test in the background and
+shows expected-versus-actual results and run history. It only ever touches the generated lab.
 
 ## Scope (read this)
 "VAPT" is Vulnerability Assessment **and** Penetration Testing. This application and this test cover the

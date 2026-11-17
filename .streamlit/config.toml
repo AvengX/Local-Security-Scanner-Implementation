@@ -12,11 +12,24 @@ serverAddress = "127.0.0.1"
 
 [client]
 toolbarMode = "minimal"
+showErrorDetails = "stacktrace"
 
+# Design system: see docs/UI_GUIDE.md. Fonts are local system fonts only (no web-font downloads).
 [theme]
 base = "dark"
-primaryColor = "#3B82F6"
+primaryColor = "#38BDF8"
+backgroundColor = "#080D18"
+secondaryBackgroundColor = "#141F30"
+textColor = "#F8FAFC"
+borderColor = "#22314A"
+baseRadius = "0.6rem"
+showSidebarBorder = true
+font = "'Segoe UI Variable Text', 'Segoe UI', system-ui, -apple-system, sans-serif"
+headingFont = "'Segoe UI Variable Display', 'Segoe UI', system-ui, sans-serif"
+codeFont = "'Cascadia Code', Consolas, 'Courier New', monospace"
+chartCategoricalColors = ["#38BDF8", "#8B5CF6", "#22C55E", "#F59E0B", "#EF4444", "#14B8A6", "#94A3B8"]
+
+[theme.sidebar]
 backgroundColor = "#0B1220"
-secondaryBackgroundColor = "#111A2E"
-textColor = "#E5E7EB"
-font = "sans serif"
+secondaryBackgroundColor = "#141F30"
+borderColor = "#1A2740"

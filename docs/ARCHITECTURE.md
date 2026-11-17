@@ -48,6 +48,12 @@ Repository Discovery Engine  (engine/repository_discovery.py)
 
 | Module | Responsibility |
 |---|---|
+| `app.py` | Streamlit shell: logo, grouped navigation (Monitor / Operate / System), sidebar health panel. |
+| `dashboard/theme.py` | Design system: palette, CSS, inline SVG icons, HTML components (all text escaped), Plotly styling. See docs/UI_GUIDE.md. |
+| `dashboard/common.py` | Config/DB access, cached tool health (60 s), top bar, background job launcher, queued-state tracking. |
+| `dashboard/states.py` | Guided empty/warning/error states (no roots, missing roots, nothing discovered, blocked/missing scanners, missing/stale vulnerability DB). |
+| `dashboard/findings_view.py` | Shared vulnerability-management view behind Findings, Vulnerabilities, Secrets and Misconfigurations. |
+| `dashboard/<page>.py` | Overview, Repositories, Scan History, Reports, VAPT Lab, Settings. |
 | `utils/config.py` | Pydantic models for `config.yaml`; atomic save; loopback-only dashboard host. |
 | `utils/security.py` | Secret redaction for logs, safe report path resolution, image-ref validation, PID liveness (no signals). |
 | `utils/logger.py` | JSON-lines rotating log (`logs/scanner.log`) with a redaction filter. |

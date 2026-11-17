@@ -16,50 +16,56 @@ if str(ROOT) not in sys.path:
 import streamlit as st  # noqa: E402
 from pydantic import ValidationError  # noqa: E402
 
-st.set_page_config(page_title="Local Security Scanner", page_icon=":material/shield_lock:", layout="wide",
-                   initial_sidebar_state="expanded")
+st.set_page_config(page_title="Local Security Scanner", page_icon=str(ROOT / "dashboard" / "assets" / "emblem.svg"),
+                   layout="wide", initial_sidebar_state="auto")
 
-from dashboard import findings, history, overview, reports, repositories, settings  # noqa: E402
-from dashboard.common import PAGES, get_config, get_conn, inject_css, running_jobs  # noqa: E402
+from dashboard import (findings, history, misconfigurations, overview, reports, repositories, secrets,  # noqa: E402
+                       settings, vapt, vulnerabilities)
+from dashboard.common import PAGES, get_config, get_conn, inject_css, notice, render_sidebar  # noqa: E402
 from utils.logger import setup_logging  # noqa: E402
+
+ASSETS = ROOT / "dashboard" / "assets"
 
 
 def main() -> None:
     inject_css()
+    st.logo(str(ASSETS / "logo.svg"), size="large", icon_image=str(ASSETS / "emblem.svg"))
     try:
         cfg = get_config()
     except ValidationError as exc:
-        st.error(f"config.yaml is invalid:\n\n{exc}")
+        notice("err", "config.yaml is invalid", str(exc))
         st.stop()
     except Exception as exc:  # noqa: BLE001
-        st.error(f"Could not load configuration: {exc}")
+        notice("err", "Could not load configuration", str(exc))
         st.stop()
     setup_logging(cfg.logs_dir, cfg.log_level, console=False)
 
+    def page(fn, title: str, icon: str, path: str, default: bool = False):  # noqa: ANN001, ANN202
+        return st.Page(fn, title=title, icon=icon, url_path=path, default=default)
+
     pages = {
-        "overview": st.Page(overview.render, title="Security Overview", icon=":material/dashboard:",
-                            url_path="overview", default=True),
-        "repositories": st.Page(repositories.render, title="Repositories", icon=":material/folder_code:",
-                                url_path="repositories"),
-        "findings": st.Page(findings.render, title="Security Findings", icon=":material/bug_report:",
-                            url_path="findings"),
-        "history": st.Page(history.render, title="Scan History", icon=":material/history:", url_path="history"),
-        "reports": st.Page(reports.render, title="Reports", icon=":material/summarize:", url_path="reports"),
-        "settings": st.Page(settings.render, title="Settings", icon=":material/settings:", url_path="settings"),
+        "overview": page(overview.render, "Overview", ":material/space_dashboard:", "overview", default=True),
+        "findings": page(findings.render, "Security Findings", ":material/bug_report:", "findings"),
+        "vulnerabilities": page(vulnerabilities.render, "Vulnerabilities", ":material/deployed_code:",
+                                "vulnerabilities"),
+        "secrets": page(secrets.render, "Secrets", ":material/key:", "secrets"),
+        "misconfigurations": page(misconfigurations.render, "Misconfigurations", ":material/tune:",
+                                  "misconfigurations"),
+        "repositories": page(repositories.render, "Repositories", ":material/folder_code:", "repositories"),
+        "history": page(history.render, "Scan History", ":material/history:", "history"),
+        "reports": page(reports.render, "Reports", ":material/summarize:", "reports"),
+        "vapt": page(vapt.render, "VAPT Lab", ":material/science:", "vapt-lab"),
+        "settings": page(settings.render, "Settings", ":material/settings:", "settings"),
     }
     PAGES.update(pages)
-    nav = st.navigation({"Monitor": [pages["overview"], pages["findings"], pages["history"]],
-                         "Manage": [pages["repositories"], pages["reports"], pages["settings"]]})
-
+    nav = st.navigation({
+        "Monitor": [pages["overview"], pages["findings"], pages["vulnerabilities"], pages["secrets"],
+                    pages["misconfigurations"]],
+        "Operate": [pages["repositories"], pages["history"], pages["reports"], pages["vapt"]],
+        "System": [pages["settings"]],
+    })
     with st.sidebar:
-        st.markdown("### :material/shield_lock: Local Security Scanner")
-        st.caption("Trivy + Gitleaks · local-first · 127.0.0.1 only")
-        conn = get_conn(cfg)
-        jobs = running_jobs(conn)
-        if jobs:
-            st.info("Scanning: " + "; ".join(f"{j['repository']} ({j['scanner']}, {j['elapsed']})" for j in jobs),
-                    icon=":material/progress_activity:")
-        st.caption(f"Offline mode: **{'ON' if cfg.scan.offline else 'OFF'}**")
+        render_sidebar(cfg, get_conn(cfg))
     nav.run()
 
 

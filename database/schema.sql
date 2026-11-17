@@ -94,6 +94,7 @@ CREATE TABLE IF NOT EXISTS finding_changes (
 );
 CREATE INDEX IF NOT EXISTS ix_changes_run ON finding_changes(scan_run_id);
 CREATE INDEX IF NOT EXISTS ix_changes_type_time ON finding_changes(change_type, changed_at);
+CREATE INDEX IF NOT EXISTS ix_changes_finding ON finding_changes(finding_id, scan_run_id);
 
 -- Lock rows prevent concurrent scans of the same repository across processes.
 CREATE TABLE IF NOT EXISTS repo_locks (

@@ -53,7 +53,8 @@ def overview_metrics(conn: sqlite3.Connection) -> dict[str, Any]:
             f"ON r.id=s.repository_id AND r.active=1 WHERE s.status IN ({_in(SUCCESS)})"),
         "severity": sev,
         "category": cats,
-        "unverified": q("SELECT COUNT(*) FROM findings WHERE status='UNVERIFIED'"),
+        "unverified": q("SELECT COUNT(*) FROM findings f JOIN repositories r ON r.id=f.repository_id "
+                        "AND r.active=1 WHERE f.status='UNVERIFIED'"),
         "failed_scans_latest": latest_failed,
         "failed_scans_total": q(f"SELECT COUNT(*) FROM scan_runs WHERE status IN ({_in(FAILED)})"),
         "running": q("SELECT COUNT(*) FROM scan_runs WHERE status='RUNNING'"),
@@ -89,20 +90,83 @@ def open_findings_trend(conn: sqlite3.Connection) -> pd.DataFrame:
 
 
 def repository_table(conn: sqlite3.Connection) -> pd.DataFrame:
-    return _df(conn, f"""
+    """One row per active repository. Counts are distinct findings (same rule as the overview)."""
+    df = _df(conn, f"""
         SELECT r.id, r.name, r.path, r.current_branch AS branch, substr(r.current_commit,1,12) AS last_commit,
                r.repo_kind AS kind, r.last_seen_at,
                (SELECT MAX(started_at) FROM scan_runs s WHERE s.repository_id=r.id) AS last_scan,
                (SELECT GROUP_CONCAT(scanner || ':' || scan_type || '=' || status, ', ') FROM scan_runs s
                  WHERE s.id IN (SELECT MAX(id) FROM scan_runs WHERE repository_id=r.id
                                 GROUP BY scanner, scan_type, scan_target)) AS scan_status,
+               (SELECT GROUP_CONCAT(status, ',') FROM scan_runs s
+                 WHERE s.id IN (SELECT MAX(id) FROM scan_runs WHERE repository_id=r.id
+                                GROUP BY scanner, scan_type, scan_target)) AS latest_statuses,
+               (SELECT SUM(duration) FROM scan_runs s WHERE s.repository_id=r.id AND s.batch_id=(
+                    SELECT batch_id FROM scan_runs WHERE repository_id=r.id ORDER BY id DESC LIMIT 1)) AS last_duration,
                (SELECT COUNT(DISTINCT dedup_key) FROM findings f WHERE f.repository_id=r.id
                   AND f.status IN ({_in(ACTIVE)}) AND f.severity='CRITICAL') AS critical,
                (SELECT COUNT(DISTINCT dedup_key) FROM findings f WHERE f.repository_id=r.id
                   AND f.status IN ({_in(ACTIVE)}) AND f.severity='HIGH') AS high,
-               (SELECT COUNT(*) FROM findings f WHERE f.repository_id=r.id
+               (SELECT COUNT(DISTINCT dedup_key) FROM findings f WHERE f.repository_id=r.id
                   AND f.status IN ({_in(ACTIVE)})) AS open_findings
         FROM repositories r WHERE r.active=1 ORDER BY r.name COLLATE NOCASE""")
+    if not df.empty:
+        df["state"] = df["latest_statuses"].map(repository_state)
+    return df
+
+
+_STATE_ORDER = ("RUNNING", "PENDING", "TIMED_OUT", "FAILED", "CANCELLED", "COMPLETED_WITH_FINDINGS", "COMPLETED",
+                "SKIPPED")
+
+
+def repository_state(latest_statuses: Any) -> str:
+    """Summarise the latest run of every scanner into one state (the most urgent one wins)."""
+    if not isinstance(latest_statuses, str) or not latest_statuses:
+        return "NEVER"
+    present = set(latest_statuses.split(","))
+    return next((s for s in _STATE_ORDER if s in present), "NEVER")
+
+
+def recent_runs(conn: sqlite3.Connection, limit: int = 8) -> pd.DataFrame:
+    return _df(conn, """SELECT s.id, r.name AS repository, s.scanner, s.scan_type, s.status, s.started_at,
+                               s.finished_at, s.duration, s.findings_count, s.new_count, s.resolved_count,
+                               s.error_message
+                        FROM scan_runs s JOIN repositories r ON r.id=s.repository_id
+                        ORDER BY s.id DESC LIMIT ?""", (limit,))
+
+
+def finding_history(conn: sqlite3.Connection, finding_id: int) -> pd.DataFrame:
+    """Every scan that observed, resolved or could not verify this finding."""
+    return _df(conn, """SELECT c.changed_at, c.change_type, c.severity, s.id AS run_id, s.scanner, s.scan_type,
+                               s.status AS run_status
+                        FROM finding_changes c JOIN scan_runs s ON s.id=c.scan_run_id
+                        WHERE c.finding_id=? ORDER BY c.id DESC""", (finding_id,))
+
+
+def upgrade_candidates(conn: sqlite3.Connection, limit: int = 5) -> pd.DataFrame:
+    """Open vulnerable packages with a published fix, ranked by severity and number of advisories."""
+    return _df(conn, f"""
+        SELECT r.name AS repository, f.package_name, f.installed_version, MAX(f.fixed_version) AS fixed_version,
+               COUNT(DISTINCT f.vulnerability_id) AS advisories,
+               MIN(CASE f.severity WHEN 'CRITICAL' THEN 0 WHEN 'HIGH' THEN 1 WHEN 'MEDIUM' THEN 2
+                                   WHEN 'LOW' THEN 3 ELSE 4 END) AS worst
+        FROM findings f JOIN repositories r ON r.id=f.repository_id AND r.active=1
+        WHERE f.category='VULNERABILITY' AND f.status IN ({_in(ACTIVE)})
+              AND f.fixed_version IS NOT NULL AND f.fixed_version != ''
+        GROUP BY r.name, f.package_name, f.installed_version
+        ORDER BY worst, advisories DESC LIMIT ?""", (limit,))
+
+
+def secret_hotspots(conn: sqlite3.Connection) -> pd.DataFrame:
+    """OPEN secret findings (confirmed by the latest covering scan) grouped by repository and file.
+
+    UNVERIFIED rows are excluded: they were not re-confirmed (e.g. inside a folder that is now skipped)."""
+    return _df(conn, f"""
+        SELECT r.name AS repository, f.file_path, COUNT(DISTINCT f.dedup_key) AS findings,
+               MAX(CASE WHEN f.scan_type IN ('dir','fs') THEN 1 ELSE 0 END) AS in_working_tree
+        FROM findings f JOIN repositories r ON r.id=f.repository_id AND r.active=1
+        WHERE f.category='SECRET' AND f.status='OPEN'
+        GROUP BY r.name, f.file_path ORDER BY findings DESC""")
 
 
 def findings_frame(conn: sqlite3.Connection, repository_id: int | None = None) -> pd.DataFrame:
@@ -120,7 +184,8 @@ def findings_frame(conn: sqlite3.Connection, repository_id: int | None = None) -
     if not df.empty:
         order = {s: i for i, s in enumerate(SEVERITIES)}
         df["_o"] = df["severity"].map(order)
-        df = df.sort_values(["_o", "repository", "id"]).drop(columns="_o").reset_index(drop=True)
+        df["_s"] = df["status"].map({"OPEN": 0, "UNVERIFIED": 1, "RESOLVED": 2}).fillna(3)
+        df = df.sort_values(["_o", "_s", "repository", "id"]).drop(columns=["_o", "_s"]).reset_index(drop=True)
         df["identifier"] = df["vulnerability_id"].fillna(df["rule_id"]).fillna("")
     return df
 

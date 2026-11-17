@@ -21,7 +21,8 @@ from services import export_service as ex
 from utils.validators import SEVERITIES
 
 APP = str(Path(__file__).resolve().parent.parent / "app.py")
-PAGES = ["overview", "repositories", "findings", "history", "reports", "settings"]
+PAGES = ["overview", "repositories", "findings", "vulnerabilities", "secrets", "misconfigurations", "history",
+         "reports", "vapt", "settings"]
 
 
 @pytest.fixture
@@ -89,7 +90,7 @@ def test_pages_render_with_data_and_failed_scan(env, page: str) -> None:
 def test_findings_page_filters_interactively(env) -> None:
     populate(env)
     at = page_app("findings").run()
-    at.multiselect(key="f_sev").set_value(["CRITICAL"]).run()
+    at.multiselect(key="all_sev").set_value(["CRITICAL"]).run()
     assert not at.exception
     assert "2 of 4 findings" in " ".join(m.value for m in at.markdown)
 
@@ -99,7 +100,7 @@ def test_overview_shows_real_counts(env) -> None:
     at = page_app("overview").run()
     html = " ".join(m.value for m in at.markdown)
     assert "Critical" in html and "Failed scans" in html
-    assert "Vulnerability DB missing" in html  # freshness surfaced honestly (no DB in test cache)
+    assert "Vulnerability database missing" in html  # freshness surfaced honestly (no DB in test cache)
 
 
 def test_secret_value_absent_everywhere(env) -> None:
@@ -173,4 +174,110 @@ def test_dead_running_scan_is_recovered_and_live_one_listed(env) -> None:
     assert dao.get_scan_run(conn, dead)["status"] == "CANCELLED"
     at = page_app("repositories").run()
     assert not at.exception
-    assert any("Scanning now" in i.value for i in at.info)
+    assert "Scanning in progress" in " ".join(m.value for m in at.markdown)
+
+
+# ---------------------------------------------------------------- redesign (v1.1) regression tests
+def test_category_pages_and_clean_vs_no_data_states(env) -> None:
+    for page in ("vulnerabilities", "secrets", "misconfigurations"):
+        at = page_app(page).run()
+        assert not at.exception
+        text = " ".join(m.value for m in at.markdown)
+        assert "No repository folders configured" in text or "not been discovered" in text or "No scan data" in text
+    populate(env)
+    for page in ("vulnerabilities", "misconfigurations", "secrets"):
+        at = page_app(page).run()
+        assert not at.exception, page
+
+
+def test_no_scan_data_is_not_reported_as_clean(env) -> None:
+    conn = init_db(env.db_path)
+    repo_dir = Path(env.repository_roots[0]) / "Empty"
+    repo_dir.mkdir(exist_ok=True)
+    dao.sync_discovered(conn, [DiscoveredRepo("Empty", str(repo_dir), env.repository_roots[0])], env.repository_roots)
+    conn.close()
+    at = page_app("findings").run()
+    text = " ".join(m.value for m in at.markdown)
+    assert "No scan data yet" in text and "does not mean" in text
+
+
+def test_scanner_text_is_escaped_and_unsafe_links_dropped(env) -> None:
+    from dashboard import theme as t
+
+    assert "<img" not in t.notice("err", "x", "<img src=x onerror=alert(1)>")
+    assert t.safe_url("javascript:alert(1)") is None and t.safe_url("data:text/html,x") is None
+    assert t.safe_url("https://avd.aquasec.com/nvd/cve-2023-32681") is not None
+    populate(env)
+    conn = init_db(env.db_path)
+    conn.execute("UPDATE findings SET remediation=?, description=?, reference_url=?",
+                 ("<script>alert(1)</script>", "![x](http://example.invalid/beacon.png)", "javascript:alert(1)"))
+    conn.commit()
+    from dashboard.findings_view import _detail
+
+    row = an.findings_frame(conn).iloc[0]
+    script = "\n".join([
+        "import sys", f"sys.path.insert(0, r'{str(Path(APP).parent)}')",
+        "from database.db import init_db", "from services import analytics_service as an",
+        "from dashboard.findings_view import _detail", "from utils.config import load_config",
+        "c = init_db(load_config().db_path)", "_detail(c, an.findings_frame(c).iloc[0], 'all')"])
+    at = AppTest.from_string(script, default_timeout=60).run()
+    html = " ".join(m.value for m in at.markdown)
+    assert not at.exception and row is not None
+    assert "<script>" not in html and "&lt;script&gt;" in html
+    assert "javascript:alert" not in html and "<img" not in html
+
+
+def test_repository_state_and_distinct_counts(env) -> None:
+    assert an.repository_state(None) == "NEVER"
+    assert an.repository_state("COMPLETED,FAILED") == "FAILED"
+    assert an.repository_state("COMPLETED,RUNNING") == "RUNNING"
+    assert an.repository_state("COMPLETED_WITH_FINDINGS,COMPLETED") == "COMPLETED_WITH_FINDINGS"
+    populate(env, failed=True)
+    conn = init_db(env.db_path)
+    df = an.repository_table(conn)
+    m = an.overview_metrics(conn)
+    assert df.iloc[0]["state"] == "FAILED"
+    assert int(df["open_findings"].sum()) == sum(m["severity"].values())  # same counting rule everywhere
+
+
+def test_finding_history_and_index(env) -> None:
+    populate(env)
+    conn = init_db(env.db_path)
+    fid = int(an.findings_frame(conn).iloc[0]["id"])
+    hist = an.finding_history(conn, fid)
+    assert len(hist) == 1 and hist.iloc[0]["change_type"] == "NEW"
+    idx = {r[1] for r in conn.execute("PRAGMA index_list(finding_changes)")}
+    assert "ix_changes_finding" in idx
+
+
+def test_settings_backup_before_save(env, monkeypatch) -> None:
+    from dashboard.settings import backup_config
+    from utils.config import save_config
+
+    monkeypatch.setattr("dashboard.settings.config_path", lambda: Path(os.environ["LSS_CONFIG"]))
+    before = Path(os.environ["LSS_CONFIG"]).read_text(encoding="utf-8")
+    dest = backup_config(env)
+    assert dest and dest.read_text(encoding="utf-8") == before
+    save_config(env, Path(os.environ["LSS_CONFIG"]))
+    assert len(list((env.data_dir / "config_backups").glob("config_*.yaml"))) == 1
+
+
+def test_vapt_page_without_and_with_results(env, tmp_path, monkeypatch) -> None:
+    import dashboard.vapt as vapt
+
+    monkeypatch.setattr(vapt, "LAB", tmp_path / "lab")
+    script = "\n".join(["import sys", f"sys.path.insert(0, r'{str(Path(APP).parent)}')", "from pathlib import Path",
+                        "import dashboard.vapt as v", f"v.LAB = Path(r'{tmp_path / 'lab'}')", "v.render()"])
+    res = AppTest.from_string(script, default_timeout=60).run()
+    assert not res.exception
+    assert "No results yet" in " ".join(m.value for m in res.markdown)
+    lab = tmp_path / "lab"
+    lab.mkdir()
+    (lab / "VAPT_TEST_RESULTS.json").write_text('{"started":"2026-11-17T04:28:28+00:00","finished":'
+                                                '"2026-11-17T04:29:17+00:00","passed":1,"total":2,"checks":['
+                                                '{"phase":"1 Health","name":"a","passed":true,"detail":""},'
+                                                '{"phase":"1 Health","name":"b","passed":false,"detail":"x"}]}',
+                                                encoding="utf-8")
+    res = AppTest.from_string(script, default_timeout=60).run()
+    assert not res.exception
+    assert "1/2" in " ".join(m.value for m in res.markdown)
