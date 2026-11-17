@@ -5,6 +5,63 @@ under folders you choose, scans them with **Trivy** and **Gitleaks**, stores res
 **SQLite**, and presents them in a **Streamlit** dashboard bound to `127.0.0.1`. Source code, reports, the
 database and logs never leave your machine.
 
+## Quick start: install on any Windows 10/11 PC
+Everything runs locally on that PC; nothing is uploaded.
+
+**1. Install the tools (once).** In PowerShell:
+```powershell
+winget install Python.Python.3.14      # or Python 3.12+ from python.org (tick "Add python.exe to PATH")
+winget install Git.Git
+winget install AquaSecurity.Trivy
+winget install Gitleaks.Gitleaks
+```
+Close and reopen PowerShell so the new tools are on PATH.
+
+**2. Get the code.** Clone it, or extract a zip made with `scripts\package.ps1`:
+```powershell
+git clone https://github.com/AvengX/Local-Security-Scanner-Implementation.git C:\Tools\LocalSecurityScanner
+cd C:\Tools\LocalSecurityScanner
+```
+
+**3. Install the app.** Creates `.venv`, installs pinned packages, creates `config.yaml` and the database,
+and runs a health check. Safe to run again.
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\install.ps1
+```
+
+**4. Download the vulnerability database** (needs internet, about 80 MB):
+```powershell
+.\.venv\Scripts\python.exe run_scan.py update-databases
+.\.venv\Scripts\python.exe run_scan.py health          # git, trivy and gitleaks should all say OK
+```
+
+**5. Choose which projects to scan.** Edit `config.yaml` (or use the dashboard's **Settings** page):
+```yaml
+repository_roots: ['C:\Users\you\source\repos', 'D:\Projects']
+```
+
+**6. Run it.**
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\start.ps1     # dashboard: http://127.0.0.1:8501
+```
+In the dashboard: **Repositories → Discover repositories → Scan all repositories**.
+
+**7. Optional: confirm it works on this PC.**
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\run_vapt_test.ps1   # should report 45/45 PASS
+```
+
+| Problem on a new PC | Fix |
+|---|---|
+| `health` shows Trivy **BLOCKED** | Windows Smart App Control blocked `trivy.exe`; the PC's owner must allow it ([docs/INSTALLATION.md](docs/INSTALLATION.md)) |
+| `DLL load failed ... Application Control` during install | Same cause; keep the versions pinned in `requirements.txt` |
+| `python` not found | Reinstall Python with "Add to PATH" ticked, reopen PowerShell |
+| Port 8501 already in use | `.\scripts\start.ps1 -Port 8510` |
+| Gitleaks FAILED "dubious ownership" | `git config --global --add safe.directory "<repo path>"` |
+
+Each PC keeps its own `config.yaml`, database, reports and logs (all git-ignored and left out of the zip).
+Scheduled scans must be set up separately on each PC. More detail: [docs/SHARING.md](docs/SHARING.md).
+
 ## 1. Overview
 * Engine (`engine/`) and CLI (`run_scan.py`) run independently of the dashboard — scheduled scans work with
   the dashboard closed.
