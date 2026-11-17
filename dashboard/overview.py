@@ -75,8 +75,9 @@ def render() -> None:
         t.metric_card("Critical", sev["CRITICAL"], "open + unverified", t.SEVERITY_COLORS["CRITICAL"], "flame"),
         t.metric_card("High", sev["HIGH"], "open + unverified", t.SEVERITY_COLORS["HIGH"], "alert"),
         t.metric_card("Exposed secrets", cat["SECRET"], "values never stored", t.CATEGORY_COLORS["SECRET"], "key"),
-        t.metric_card("Misconfigurations", cat["MISCONFIGURATION"], "IaC / Dockerfile",
-                      t.CATEGORY_COLORS["MISCONFIGURATION"], "sliders"),
+        t.metric_card("Misconfigs", cat["MISCONFIGURATION"], "IaC / Dockerfile settings",
+                      t.CATEGORY_COLORS["MISCONFIGURATION"], "sliders",
+                      aria=f"Misconfigurations: {cat['MISCONFIGURATION']}"),
         t.metric_card("Failed scans", m["failed_scans_latest"], f"latest per scanner · {m['failed_scans_total']} total",
                       "err" if m["failed_scans_latest"] else "ok", "x_circle" if m["failed_scans_latest"] else
                       "check_circle"),

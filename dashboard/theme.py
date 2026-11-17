@@ -104,7 +104,7 @@ def metric_card(label: str, value: Any, sub: str = "", tone: str = "neutral", ic
                 aria: str | None = None) -> str:
     c = TONES.get(tone, tone)
     return (f"<div class='lss-metric' style='--c:{c}' role='group' aria-label='{esc(aria or f'{label}: {value}')}'>"
-            f"<div class='lss-metric-top'><span class='lss-metric-label'>{esc(label)}</span>"
+            f"<div class='lss-metric-top'><span class='lss-metric-label' title='{esc(label)}'>{esc(label)}</span>"
             f"<span class='lss-metric-icon'>{icon(icon_name, 16, c)}</span></div>"
             f"<div class='lss-metric-value'>{esc(value)}</div><div class='lss-metric-sub'>{esc(sub)}</div></div>")
 
@@ -254,7 +254,7 @@ div[class*="st-key-topbar"] [data-testid="stMarkdownContainer"] { margin-bottom:
 .lss-metric:hover { transform: translateY(-2px); border-color: color-mix(in srgb, var(--c) 45%, #22314A); box-shadow: 0 12px 28px -18px var(--c); }
 .lss-metric-top { display: flex; justify-content: space-between; align-items: flex-start; gap: .5rem; min-height: 1.9rem; }
 .lss-metric-label { color: var(--lss-muted); font-size: .7rem; font-weight: 600; text-transform: uppercase; letter-spacing: .05em;
-  line-height: 1.25; overflow-wrap: anywhere; min-width: 0; }
+  line-height: 1.25; overflow-wrap: normal; word-break: normal; hyphens: none; min-width: 0; }
 .lss-metric-icon { display: inline-flex; padding: .3rem; border-radius: 9px; background: color-mix(in srgb, var(--c) 14%, transparent); }
 .lss-metric-value { font-size: clamp(1.35rem, 2vw, 1.9rem); font-weight: 700; color: var(--lss-text); margin-top: .25rem; line-height: 1.15;
   font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
