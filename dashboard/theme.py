@@ -185,6 +185,8 @@ CSS = """
   radial-gradient(1100px 500px at 85% -10%, rgba(56,189,248,.07), transparent 60%),
   radial-gradient(900px 480px at -10% 110%, rgba(139,92,246,.06), transparent 60%), var(--lss-bg); }
 header[data-testid="stHeader"] { background: transparent; }
+/* When the sidebar is collapsed its logo sits in the header: leave room so it never overlaps the title. */
+.stApp:has([data-testid="stSidebar"][data-collapsed="true"]) [data-testid="stMainBlockContainer"] { padding-top: 3.6rem; }
 .block-container, [data-testid="stMainBlockContainer"] { padding-top: 1.1rem; padding-bottom: 2.5rem;
   max-width: 1560px; padding-left: clamp(.8rem, 2.4vw, 2.6rem); padding-right: clamp(.8rem, 2.4vw, 2.6rem); }
 [data-testid="stSidebar"] { background: linear-gradient(180deg,#0B1220 0%, #090F1C 100%); }
