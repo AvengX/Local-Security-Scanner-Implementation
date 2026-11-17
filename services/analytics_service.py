@@ -21,6 +21,11 @@ def _df(conn: sqlite3.Connection, sql: str, params: tuple | list = ()) -> pd.Dat
     return pd.DataFrame([tuple(r) for r in cur.fetchall()], columns=cols)
 
 
+# Joins that limit a query to monitored repositories (active = inside a configured root).
+_ACTIVE_F = "JOIN repositories r ON r.id=f.repository_id AND r.active=1"
+_ACTIVE_S = "JOIN repositories r ON r.id=s.repository_id AND r.active=1"
+
+
 def _in(values: tuple[str, ...]) -> str:
     return ",".join(f"'{v}'" for v in values)  # constants only, never user input
 
@@ -29,14 +34,14 @@ def overview_metrics(conn: sqlite3.Connection) -> dict[str, Any]:
     q = lambda sql, p=(): conn.execute(sql, p).fetchone()[0]  # noqa: E731
     sev = {s: 0 for s in SEVERITIES}
     for r in conn.execute(
-        f"SELECT severity, COUNT(DISTINCT repository_id || ':' || dedup_key) FROM findings "
-        f"WHERE status IN ({_in(ACTIVE)}) GROUP BY severity"
+        f"SELECT f.severity, COUNT(DISTINCT f.repository_id || ':' || f.dedup_key) FROM findings f {_ACTIVE_F} "
+        f"WHERE f.status IN ({_in(ACTIVE)}) GROUP BY f.severity"
     ):
         sev[r[0]] = r[1]
     cats = {c: 0 for c in CATEGORIES}
     for r in conn.execute(
-        f"SELECT category, COUNT(DISTINCT repository_id || ':' || dedup_key) FROM findings "
-        f"WHERE status IN ({_in(ACTIVE)}) GROUP BY category"
+        f"SELECT f.category, COUNT(DISTINCT f.repository_id || ':' || f.dedup_key) FROM findings f {_ACTIVE_F} "
+        f"WHERE f.status IN ({_in(ACTIVE)}) GROUP BY f.category"
     ):
         cats[r[0]] = r[1]
     # "Failed scans" = latest run per repo/scanner/type/target that did not succeed.
@@ -56,11 +61,11 @@ def overview_metrics(conn: sqlite3.Connection) -> dict[str, Any]:
         "unverified": q("SELECT COUNT(*) FROM findings f JOIN repositories r ON r.id=f.repository_id "
                         "AND r.active=1 WHERE f.status='UNVERIFIED'"),
         "failed_scans_latest": latest_failed,
-        "failed_scans_total": q(f"SELECT COUNT(*) FROM scan_runs WHERE status IN ({_in(FAILED)})"),
+        "failed_scans_total": q(f"SELECT COUNT(*) FROM scan_runs s {_ACTIVE_S} WHERE s.status IN ({_in(FAILED)})"),
         "running": q("SELECT COUNT(*) FROM scan_runs WHERE status='RUNNING'"),
-        "last_successful_scan": q(f"SELECT MAX(finished_at) FROM scan_runs WHERE status IN ({_in(SUCCESS)})"),
+        "last_successful_scan": q(f"SELECT MAX(s.finished_at) FROM scan_runs s {_ACTIVE_S} WHERE s.status IN ({_in(SUCCESS)})"),
         "last_discovery": get_setting(conn, "last_discovery_at"),
-        "total_scans": q("SELECT COUNT(*) FROM scan_runs"),
+        "total_scans": q(f"SELECT COUNT(*) FROM scan_runs s {_ACTIVE_S}"),
     }
 
 
@@ -74,9 +79,10 @@ def findings_by_repository(conn: sqlite3.Connection) -> pd.DataFrame:
 
 def change_trend(conn: sqlite3.Connection) -> pd.DataFrame:
     """Daily counts of NEW and RESOLVED findings."""
-    return _df(conn, """
-        SELECT substr(changed_at, 1, 10) AS day, change_type, COUNT(*) AS count
-        FROM finding_changes WHERE change_type IN ('NEW','RESOLVED')
+    return _df(conn, f"""
+        SELECT substr(c.changed_at, 1, 10) AS day, c.change_type, COUNT(*) AS count
+        FROM finding_changes c JOIN scan_runs s ON s.id=c.scan_run_id {_ACTIVE_S}
+        WHERE c.change_type IN ('NEW','RESOLVED')
         GROUP BY day, change_type ORDER BY day""")
 
 
@@ -84,7 +90,7 @@ def open_findings_trend(conn: sqlite3.Connection) -> pd.DataFrame:
     """Findings observed per successful scan day and severity (snapshot of what scans actually saw)."""
     return _df(conn, f"""
         SELECT substr(s.finished_at, 1, 10) AS day, c.severity, COUNT(DISTINCT c.finding_id) AS findings
-        FROM finding_changes c JOIN scan_runs s ON s.id=c.scan_run_id
+        FROM finding_changes c JOIN scan_runs s ON s.id=c.scan_run_id {_ACTIVE_S}
         WHERE c.change_type IN ('NEW','EXISTING') AND s.status IN ({_in(SUCCESS)})
         GROUP BY day, c.severity ORDER BY day""")
 
@@ -131,7 +137,7 @@ def recent_runs(conn: sqlite3.Connection, limit: int = 8) -> pd.DataFrame:
     return _df(conn, """SELECT s.id, r.name AS repository, s.scanner, s.scan_type, s.status, s.started_at,
                                s.finished_at, s.duration, s.findings_count, s.new_count, s.resolved_count,
                                s.error_message
-                        FROM scan_runs s JOIN repositories r ON r.id=s.repository_id
+                        FROM scan_runs s JOIN repositories r ON r.id=s.repository_id AND r.active=1
                         ORDER BY s.id DESC LIMIT ?""", (limit,))
 
 
@@ -180,6 +186,8 @@ def findings_frame(conn: sqlite3.Connection, repository_id: int | None = None) -
     if repository_id is not None:
         sql += " WHERE f.repository_id=?"
         params.append(repository_id)
+    else:
+        sql += " WHERE r.active=1"  # only monitored repositories (inside a configured root)
     df = _df(conn, sql, params)
     if not df.empty:
         order = {s: i for i, s in enumerate(SEVERITIES)}
@@ -221,6 +229,8 @@ def scan_history(conn: sqlite3.Connection, repository_id: int | None = None, lim
     if repository_id is not None:
         sql += " WHERE s.repository_id=?"
         params.append(repository_id)
+    else:
+        sql += " WHERE r.active=1"  # only monitored repositories (inside a configured root)
     sql += " ORDER BY s.id DESC LIMIT ?"
     params.append(limit)
     return _df(conn, sql, params)

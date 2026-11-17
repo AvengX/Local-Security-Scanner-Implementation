@@ -331,3 +331,33 @@ def test_selected_row_accepts_row_checkbox_or_cell_click() -> None:
     assert selected_row(SimpleNamespace(selection={"rows": [2], "cells": []})) == 2      # checkbox
     assert selected_row(SimpleNamespace(selection={"rows": [], "cells": [(4, "title")]})) == 4  # cell click
     assert selected_row(SimpleNamespace(selection=SimpleNamespace(rows=[], cells=[[1, "sev"]]))) == 1
+
+
+def test_overview_counts_only_monitored_repositories(tmp_path) -> None:  # noqa: ANN001
+    from database.db import init_db, transaction, utcnow
+    from engine.repository_discovery import DiscoveredRepo
+    from services import analytics_service as an
+
+    conn = init_db(tmp_path / "db.sqlite")
+    for n in ("Keep", "Gone"):
+        (tmp_path / n).mkdir()
+    dao.sync_discovered(conn, [DiscoveredRepo(n, str(tmp_path / n), str(tmp_path)) for n in ("Keep", "Gone")],
+                        [str(tmp_path)])
+    ids = {r["name"]: r["id"] for r in dao.list_repositories(conn)}
+    now = utcnow()
+    with transaction(conn):
+        for name, rid in ids.items():
+            run = conn.execute("INSERT INTO scan_runs(repository_id, scanner, scan_type, status, started_at, "
+                               "finished_at) VALUES (?,?,?,?,?,?)",
+                               (rid, "trivy", "fs", "COMPLETED_WITH_FINDINGS", now, now)).lastrowid
+            conn.execute("INSERT INTO findings(repository_id, scanner, scan_type, category, severity, status, "
+                         "dedup_key, fingerprint, title, first_seen, last_seen) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                         (rid, "trivy", "fs", "VULNERABILITY", "HIGH", "OPEN", f"k{rid}", f"f{rid}", "t", now, now))
+    # "Gone" is removed from the configured roots.
+    dao.sync_discovered(conn, [DiscoveredRepo("Keep", str(tmp_path / "Keep"), str(tmp_path))], [],
+                        configured_roots=[str(tmp_path / "Keep")])
+    m = an.overview_metrics(conn)
+    assert m["repositories"] == 1 and m["total_scans"] == 1 and m["severity"]["HIGH"] == 1
+    assert set(an.findings_frame(conn)["repository"]) == {"Keep"}
+    assert set(an.scan_history(conn)["repository"]) == {"Keep"}
+    assert len(an.findings_frame(conn, ids["Gone"])) == 1  # history kept and still reachable by id

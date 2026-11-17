@@ -49,7 +49,9 @@ def render() -> None:
 
     sev, cat = m["severity"], m["category"]
     week = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
-    new7, res7 = (conn.execute("SELECT COUNT(*) FROM finding_changes WHERE change_type=? AND changed_at>=?",
+    new7, res7 = (conn.execute("SELECT COUNT(*) FROM finding_changes c JOIN scan_runs s ON s.id=c.scan_run_id "
+                               "JOIN repositories r ON r.id=s.repository_id AND r.active=1 "
+                               "WHERE c.change_type=? AND c.changed_at>=?",
                                (k, week)).fetchone()[0] for k in ("NEW", "RESOLVED"))
     hot = an.secret_hotspots(conn)
     wt_secrets = int(hot["in_working_tree"].sum()) if not hot.empty else 0

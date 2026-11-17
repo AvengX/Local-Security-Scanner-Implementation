@@ -267,7 +267,8 @@ def page_header(title: str, subtitle: str, search: bool = False) -> None:
     """Compact top bar: title, description, live status chips, optional global search and Refresh."""
     cfg = get_config()
     conn = get_conn(cfg)
-    last = conn.execute("SELECT MAX(finished_at) FROM scan_runs WHERE status IN "
+    last = conn.execute("SELECT MAX(s.finished_at) FROM scan_runs s JOIN repositories r "
+                        "ON r.id=s.repository_id AND r.active=1 WHERE s.status IN "
                         "('COMPLETED','COMPLETED_WITH_FINDINGS')").fetchone()[0]
     health = tool_health(cfg.trivy.executable, cfg.gitleaks.executable)
     scanners = [h for n, h in health.items() if n in ("trivy", "gitleaks")]
