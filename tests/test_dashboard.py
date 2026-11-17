@@ -319,3 +319,15 @@ def test_settings_browse_adds_root(env, tmp_path) -> None:
     assert str(picked) in value and value.startswith(before.strip())
     # Saving is still an explicit step: config.yaml is unchanged until "Validate and save".
     assert str(picked) not in Path(os.environ["LSS_CONFIG"]).read_text(encoding="utf-8")
+
+
+def test_selected_row_accepts_row_checkbox_or_cell_click() -> None:
+    from types import SimpleNamespace
+
+    from dashboard.common import selected_row
+
+    assert selected_row(None) is None
+    assert selected_row(SimpleNamespace(selection={"rows": [], "cells": []})) is None
+    assert selected_row(SimpleNamespace(selection={"rows": [2], "cells": []})) == 2      # checkbox
+    assert selected_row(SimpleNamespace(selection={"rows": [], "cells": [(4, "title")]})) == 4  # cell click
+    assert selected_row(SimpleNamespace(selection=SimpleNamespace(rows=[], cells=[[1, "sev"]]))) == 1

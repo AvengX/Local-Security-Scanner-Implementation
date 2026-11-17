@@ -5,7 +5,7 @@ from __future__ import annotations
 import streamlit as st
 
 from dashboard import theme as t
-from dashboard.common import (PAGES, ago, clear_queued, fmt_ts, get_config, get_conn, html, is_queued,
+from dashboard.common import (ROW_SELECT, selected_row, PAGES, ago, clear_queued, fmt_ts, get_config, get_conn, html, is_queued,
                               launch_background, mark_queued, notice, page_header, queued_at, running_jobs,
                               scans_started_since, section, watch_until_idle)
 from dashboard.states import no_repositories, system_alerts
@@ -112,7 +112,7 @@ def render() -> None:
     event = st.dataframe(
         view[["name", "state_t", "branch", "last_commit", "last_scan_t", "duration_t", "critical", "high",
               "open_findings", "path"]],
-        hide_index=True, width="stretch", on_select="rerun", selection_mode="single-row", key="repo_table",
+        hide_index=True, width="stretch", on_select="rerun", selection_mode=ROW_SELECT, key="repo_table",
         height=min(480, 40 + 35 * len(view)),
         column_config={
             "name": st.column_config.TextColumn("Repository", width="medium"),
@@ -124,11 +124,11 @@ def render() -> None:
             "path": st.column_config.TextColumn("Path", width="large"),
         },
     )
-    rows = event.selection.rows if event and event.selection else []
-    if not rows:
-        st.caption("Select a repository to scan it on its own or see its details and recent scans.")
+    row = selected_row(event)
+    if row is None or row >= len(view):
+        st.caption("Click a repository to scan it on its own or see its details and recent scans.")
         return
-    repo = view.iloc[rows[0]]
+    repo = view.iloc[row]
     busy = repo["state"] in ("RUNNING", "QUEUED", "PENDING") or scan_all_busy
     with st.container(key="panel_repo_detail"):
         html(f"<div style='display:flex;gap:.6rem;align-items:center;flex-wrap:wrap'>"

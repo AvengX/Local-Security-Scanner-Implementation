@@ -187,6 +187,26 @@ def launch_background(args: list[str], cfg: AppConfig) -> int:
     return launch_process(PROJECT_ROOT / "run_scan.py", args, cfg)
 
 
+# --------------------------------------------------------------------------------------- table selection
+# Let users open a row by ticking its checkbox *or* clicking any cell in it.
+ROW_SELECT = ["single-row", "single-cell"]
+
+
+def selected_row(event: Any) -> int | None:
+    """Index of the row chosen in an st.dataframe event (row checkbox or clicked cell)."""
+    sel = getattr(event, "selection", None) if event else None
+    if not sel:
+        return None
+    rows = sel.get("rows") if isinstance(sel, dict) else getattr(sel, "rows", None)
+    if rows:
+        return int(rows[0])
+    cells = sel.get("cells") if isinstance(sel, dict) else getattr(sel, "cells", None)
+    if cells:
+        first = cells[0]
+        return int(first[0] if isinstance(first, (list, tuple)) else first["row"])
+    return None
+
+
 # ------------------------------------------------------------------------------------------ formatting
 def fmt_ts(value: Any, short: bool = False) -> str:
     if not value or (isinstance(value, float) and value != value):

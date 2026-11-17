@@ -11,7 +11,7 @@ import pandas as pd
 import streamlit as st
 
 from dashboard import theme as t
-from dashboard.common import fmt_ts, get_config, get_conn, html, notice, page_header, section
+from dashboard.common import ROW_SELECT, selected_row, fmt_ts, get_config, get_conn, html, notice, page_header, section
 from dashboard.states import no_repositories
 from services import analytics_service as an
 from services.export_service import findings_csv_bytes
@@ -128,15 +128,15 @@ def render_findings(kind: str) -> None:
     display = _display_frame(conn, view, kind)
     cols, config = _columns(kind)
     event = st.dataframe(display[cols], hide_index=True, width="stretch", on_select="rerun",
-                         selection_mode="single-row", height=min(520, 40 + 35 * len(display)), column_config=config,
+                         selection_mode=ROW_SELECT, height=min(520, 40 + 35 * len(display)), column_config=config,
                          key=f"{kind}_table")
     a1, a2 = st.columns([1, 3], vertical_alignment="center")
     a1.download_button("Export CSV", findings_csv_bytes(view), f"{kind}_findings.csv", "text/csv",
                        icon=":material/download:", width="stretch", key=f"{kind}_csv")
-    a2.caption("Select a row to open its details and history.")
-    rows = event.selection.rows if event and event.selection else []
-    if rows:
-        _detail(conn, view.iloc[rows[0]], kind)
+    a2.caption("Click any row to open its details and history.")
+    row = selected_row(event)
+    if row is not None and row < len(view):
+        _detail(conn, view.iloc[row], kind)
 
 
 def _display_frame(conn, view: pd.DataFrame, kind: str) -> pd.DataFrame:  # noqa: ANN001

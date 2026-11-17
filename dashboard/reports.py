@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 import streamlit as st
 
 from dashboard import theme as t
-from dashboard.common import (fmt_bytes, fmt_ts, get_config, get_conn, get_freshness, html, notice, page_header,
+from dashboard.common import (ROW_SELECT, selected_row, fmt_bytes, fmt_ts, get_config, get_conn, get_freshness, html, notice, page_header,
                               section)
 from database import repositories as dao
 from services import analytics_service as an
@@ -101,10 +101,10 @@ def _raw_reports(conn, cfg, repo_id) -> None:  # noqa: ANN001
     rows = [{"Run": e.run_id, "Repository": e.repository, "Type": e.scan_type,
              "Status": t.STATUS_LABELS.get(e.status, e.status), "Scan date": fmt_ts(e.started_at),
              "Size": fmt_bytes(e.size)} for e in entries]
-    event = st.dataframe(rows, hide_index=True, width="stretch", on_select="rerun", selection_mode="single-row",
+    event = st.dataframe(rows, hide_index=True, width="stretch", on_select="rerun", selection_mode=ROW_SELECT,
                          height=min(360, 40 + 35 * len(rows)), key=f"raw_table_{tool}")
-    sel = event.selection.rows if event and event.selection else []
-    entry = entries[sel[0]] if sel else entries[0]
+    row = selected_row(event)
+    entry = entries[row] if row is not None and row < len(entries) else entries[0]
     try:
         name, data = read_report_for_run(conn, entry.run_id, cfg.reports_dir)
     except (PermissionError, FileNotFoundError) as exc:
@@ -113,6 +113,6 @@ def _raw_reports(conn, cfg, repo_id) -> None:  # noqa: ANN001
     c1, c2 = st.columns([1, 2], vertical_alignment="center")
     c1.download_button(f"Download run #{entry.run_id}", data, name, "application/json", icon=":material/download:",
                        width="stretch", key="dl_raw")
-    c2.caption(f"{name} · select a row to choose another report. "
+    c2.caption(f"{name} · click a row to choose another report. "
                + ("Trivy masks secret matches; treat raw reports as sensitive local files." if tool == "trivy" else
                   "Gitleaks reports are generated with --redact (secret values replaced by REDACTED)."))
