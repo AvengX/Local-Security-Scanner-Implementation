@@ -5,26 +5,47 @@ under folders you choose, scans them with **Trivy** and **Gitleaks**, stores res
 **SQLite**, and presents them in a **Streamlit** dashboard bound to `127.0.0.1`. Source code, reports, the
 database and logs never leave your machine.
 
-## Quick start: install on any Windows 10/11 PC
-Everything runs locally on that PC; nothing is uploaded.
+## How it works
+```
+Your project folders ──► Trivy + Gitleaks ──► SQLite database ──► Dashboard (http://127.0.0.1:8501)
+        ▲                  (run_scan.py)        (data\ folder)              │
+        └────────────────── buttons start scans in the background ──────────┘
+```
+1. You choose the folders that hold your projects (`repository_roots`).
+2. **Discovery** finds every Git repository inside them.
+3. **Trivy** checks dependencies for known vulnerabilities, Docker/IaC files for unsafe settings, and files for secrets.
+   **Gitleaks** finds passwords and keys in current files *and* in old commits.
+4. Results go into a local SQLite database, compared with the previous scan: new, still open, fixed, or unverified.
+5. The **dashboard** reads that database and shows it. It can also start scans in the background.
 
-**1. Install the tools (once).** In PowerShell:
+Nothing is uploaded. Only Trivy downloads its vulnerability list from the internet, and offline mode turns that off.
+The scanner never changes your projects.
+
+## Install on any Windows 10/11 laptop
+Each laptop has its own independent copy with its own settings, database and results. Nothing is shared between PCs.
+
+**1. Install the tools (once).** Open PowerShell:
 ```powershell
 winget install Python.Python.3.14      # or Python 3.12+ from python.org (tick "Add python.exe to PATH")
 winget install Git.Git
 winget install AquaSecurity.Trivy
 winget install Gitleaks.Gitleaks
 ```
-Close and reopen PowerShell so the new tools are on PATH.
+Close and reopen PowerShell so the new tools are found.
 
-**2. Get the code.** Clone it, or extract a zip made with `scripts\package.ps1`:
+**2. Get the code.** Clone it, or extract a zip made with `scripts\package.ps1` on another PC:
 ```powershell
 git clone https://github.com/AvengX/Local-Security-Scanner-Implementation.git C:\Tools\LocalSecurityScanner
 cd C:\Tools\LocalSecurityScanner
 ```
 
-**3. Install the app.** Creates `.venv`, installs pinned packages, creates `config.yaml` and the database,
-and runs a health check. Safe to run again.
+**3. Install the app.** This step:
+* creates a private Python environment (`.venv`),
+* installs the pinned packages,
+* creates `config.yaml` and the database,
+* runs a health check.
+
+It is safe to run again.
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\install.ps1
 ```
@@ -35,32 +56,125 @@ powershell -ExecutionPolicy Bypass -File .\scripts\install.ps1
 .\.venv\Scripts\python.exe run_scan.py health          # git, trivy and gitleaks should all say OK
 ```
 
-**5. Choose which projects to scan.** Edit `config.yaml` (or use the dashboard's **Settings** page):
+**5. Start the dashboard:**
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\start.ps1     # opens http://127.0.0.1:8501
+```
+
+**6. Point it at your projects.** In the dashboard, open **Settings → Configuration → 1 · Repository roots**,
+enter your folders one per line (for example `C:\Users\you\source\repos`) and press **Validate and save**.
+Alternatively, edit `config.yaml`:
 ```yaml
 repository_roots: ['C:\Users\you\source\repos', 'D:\Projects']
 ```
 
-**6. Run it.**
-```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\start.ps1     # dashboard: http://127.0.0.1:8501
-```
-In the dashboard: **Repositories → Discover repositories → Scan all repositories**.
+**7. Scan.** Go to **Repositories → Discover repositories → Scan all repositories**. The page updates on its own when the scan finishes.
 
-**7. Optional: confirm it works on this PC.**
+**8. Optional: prove it works on this laptop.** Open **VAPT Lab → Run VAPT test**, or run:
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\run_vapt_test.ps1   # should report 45/45 PASS
 ```
 
-| Problem on a new PC | Fix |
+**Every day after that:** run `.\scripts\start.ps1` and use the dashboard.
+**Get updates:** `git pull`, then `.\scripts\install.ps1` again if `requirements.txt` changed, then restart the dashboard.
+Database changes are applied automatically when it starts.
+
+| Problem on a new laptop | Fix |
 |---|---|
-| `health` shows Trivy **BLOCKED** | Windows Smart App Control blocked `trivy.exe`; the PC's owner must allow it ([docs/INSTALLATION.md](docs/INSTALLATION.md)) |
-| `DLL load failed ... Application Control` during install | Same cause; keep the versions pinned in `requirements.txt` |
-| `python` not found | Reinstall Python with "Add to PATH" ticked, reopen PowerShell |
+| Sidebar or `health` shows Trivy **Blocked by Windows** | Windows Smart App Control stopped `trivy.exe` (it is not code-signed). The laptop's owner must allow it ([docs/SECURITY.md](docs/SECURITY.md)). Until then, Trivy scans show as FAILED, never as clean. |
+| `DLL load failed ... Application Control` during install | Same cause; keep the versions pinned in `requirements.txt`. |
+| Vuln DB shows **Missing** | Step 4 while online, or **Settings → Scanners & vulnerability DB → Update**. |
+| No repositories appear | Check the folders in step 6, then press **Discover repositories**. The page explains what is wrong. |
+| `python` not found | Reinstall Python with "Add to PATH" ticked, then reopen PowerShell. |
 | Port 8501 already in use | `.\scripts\start.ps1 -Port 8510` |
 | Gitleaks FAILED "dubious ownership" | `git config --global --add safe.directory "<repo path>"` |
 
-Each PC keeps its own `config.yaml`, database, reports and logs (all git-ignored and left out of the zip).
-Scheduled scans must be set up separately on each PC. More detail: [docs/SHARING.md](docs/SHARING.md).
+Your `config.yaml`, database, reports and logs are git-ignored and left out of the zip, so sharing the code never shares
+your results. Scheduled scans must be set up separately on each laptop. More detail: [docs/SHARING.md](docs/SHARING.md).
+
+## Using the dashboard
+Every page answers one question. Full guide: [docs/UI_GUIDE.md](docs/UI_GUIDE.md).
+
+| Page | Question it answers |
+|---|---|
+| Overview | How safe am I right now? |
+| Security Findings | What exactly is wrong, everywhere? |
+| Vulnerabilities | Which libraries I use have known security holes? |
+| Secrets | Where did passwords or API keys end up in my code? |
+| Misconfigurations | Which Docker or cloud settings are unsafe? |
+| Repositories | Which projects are watched, and how do I scan them? |
+| Scan History | What happened every time a scan ran? |
+| Reports | How do I download or share the results? |
+| VAPT Lab | Does the scanner itself work? |
+| Settings | How do I change what is scanned, and how? |
+
+**On every page**
+* **Sidebar → System health:** Trivy, Gitleaks, vulnerability DB and results database.
+  Green = working, amber = needs attention (for example an old vulnerability list), red = not working (missing or blocked by Windows).
+  Running scans are listed underneath.
+* **Top bar:** page name, when the last scan finished, scanner status, vulnerability-list age, and **Refresh**.
+
+**Overview**: your security summary and the place to start.
+* **Search box:** type a CVE, package or file name to jump to matching findings.
+* **Security posture:** one headline based on the worst open problem.
+  *Critical exposure* (red) → *Elevated risk* (orange) → *Guarded* → *No open findings* (green).
+* **Seven cards:** repositories, scanned, critical, high, exposed secrets, misconfigurations, failed scans.
+* **Charts:** problems by severity, by type and by project; new versus fixed per day; trend over time.
+* **Recommended actions:** a to-do list built from your results, for example "Upgrade happy-dom 20.14.6 → 21.0.4" or
+  "Rotate credentials found in these files".
+* **Latest scan activity** and **Scanner health** panels.
+
+**Security Findings**: every problem in every project, in one table.
+* **Filters:** project, severity, type, status, date, CVE, package or file. **Export CSV** saves the filtered list.
+* **Click a row** to see what the problem is, where (file and line), how to fix it, a reference link, and its
+  **history** (first found, every scan that saw it, when it was fixed).
+* **Status:** *Open* = still there, *Resolved* = a later scan confirmed it is gone,
+  *Unverified* = could not be re-checked, so it is kept rather than assumed fixed.
+
+**Vulnerabilities**: only security holes in packages your projects use (from `package-lock.json`, `requirements.txt`
+and similar), with the **installed** version and the **version that fixes it**.
+
+**Secrets**: only leaked passwords, API keys and tokens.
+* **Found in** shows *Working tree* (in a file now) or *Git history* (committed in the past and still readable by anyone with the repository).
+* The **secret value is never stored or shown**.
+* Fix: rotate the key at the provider (new key, cancel the old one), then remove it from the code.
+
+**Misconfigurations**: unsafe settings in Dockerfiles, Kubernetes or Terraform, for example "container runs as root".
+Click a row for the fix.
+
+**Repositories**: your projects, and where scans start.
+* **Discover repositories:** finds Git projects in your folders.
+* **Scan all repositories:** scans everything in the background. The **Offline scan** switch uses the saved vulnerability list only.
+* **Table:** status (Clean, Findings, Running, Queued, Failed, Not scanned), branch, last scan, duration, problem counts.
+* **Click a project** to get **Scan this repository**, shortcuts to its findings and history, and its last 10 scans with any errors.
+* Scan buttons are disabled while a scan is running, and the page updates itself when it ends.
+
+**Scan History**: a log of every scanner run.
+* **Cards:** runs, success rate, failures, average time.
+* **Charts:** scans per day; findings over time.
+* **Table:** duration, findings, new and fixed counts, error message.
+* **Compare two scans:** pick two scans of the same project to see what is new and what was fixed.
+
+**Reports**: downloads.
+* Choose *all projects* or *one project*, then download **CSV**, **JSON**, **Markdown** or **HTML**.
+* **Save all formats to disk** writes them to `reports\exports`.
+* The original Trivy and Gitleaks output of each scan is also downloadable.
+
+**VAPT Lab**: a self-test for the scanner.
+* **Run VAPT test** builds 4 practice projects with planted problems (old libraries, fake keys, unsafe settings, plus one clean project), scans them, and checks 45 expectations.
+* Shows the result (for example 45/45), expected versus actual for every check, and past runs.
+* It never touches your real projects.
+
+**Settings**
+* **Configuration:** project folders, folders to skip (`node_modules`, `.venv`…), scan timeout, parallel scans, offline mode, scanners on or off, storage paths.
+  **Validate and save** backs up the old settings first. **Reset to defaults** asks for confirmation.
+* **Scanners & vulnerability DB:** tool status and versions; **Update vulnerability database** (needs internet).
+* **Database & backups:** size and health of the results database; **Back up database now**.
+* **Scheduling:** shows the command for automatic daily or weekly scans. Nothing is created without your confirmation in the command line.
+
+**A typical routine:** **Repositories → Scan all** → read **Overview → Recommended actions** → rotate keys
+(**Secrets**) and upgrade packages (**Vulnerabilities**) → scan again. Fixed items turn *Resolved* →
+download a summary from **Reports** if someone else needs it.
 
 ## 1. Overview
 * Engine (`engine/`) and CLI (`run_scan.py`) run independently of the dashboard — scheduled scans work with
