@@ -22,8 +22,12 @@ def rows(cur: sqlite3.Cursor) -> list[dict[str, Any]]:
 
 # ----------------------------------------------------------------------------- repositories
 def sync_discovered(conn: sqlite3.Connection, discovered: Iterable[DiscoveredRepo],
-                    roots: Iterable[str]) -> dict[str, int]:
+                    roots: Iterable[str], *, configured_roots: Iterable[str] | None = None) -> dict[str, int]:
     """Upsert discovered repositories; deactivate ones under scanned roots that disappeared.
+
+    When ``configured_roots`` is given (all roots in the config, including ones that are temporarily missing),
+    repositories outside every configured root are deactivated too — e.g. after a root is removed in Settings.
+    Deactivation keeps all history; re-adding the root re-activates the repository.
 
     A repository that vanished from one path and re-appeared elsewhere with the same name and HEAD commit
     is treated as *moved* (path updated, history preserved).
@@ -31,6 +35,7 @@ def sync_discovered(conn: sqlite3.Connection, discovered: Iterable[DiscoveredRep
     now = utcnow()
     stats = {"new": 0, "updated": 0, "moved": 0, "deactivated": 0}
     roots = list(roots)
+    configured = list(configured_roots) if configured_roots is not None else None
     found_keys: set[str] = set()
     with transaction(conn):
         for repo in discovered:
@@ -74,7 +79,8 @@ def sync_discovered(conn: sqlite3.Connection, discovered: Iterable[DiscoveredRep
             if r["path_key"] in found_keys:
                 continue
             under_root = any(is_within(r["path"], root) for root in roots)
-            if under_root or not os.path.isdir(r["path"]):
+            outside_config = configured is not None and not any(is_within(r["path"], c) for c in configured)
+            if under_root or outside_config or not os.path.isdir(r["path"]):
                 conn.execute("UPDATE repositories SET active=0 WHERE id=?", (r["id"],))
                 stats["deactivated"] += 1
     return stats

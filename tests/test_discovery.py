@@ -145,3 +145,30 @@ def test_sync_records_moves_and_deletions(tmp_path: Path, roots: Path) -> None:
     moved = dao.find_repositories(conn, name="A")[0]
     assert moved["id"] == original_id and moved["path"].endswith(os.path.join("moved", "A"))
     assert dao.find_repositories(conn, name="B") == []
+
+
+def test_sync_deactivates_repos_outside_configured_roots(tmp_path: Path) -> None:
+    conn = init_db(tmp_path / "db.sqlite")
+    keep_root, drop_root = tmp_path / "keep", tmp_path / "drop"
+    make_repo(keep_root / "K")
+    make_repo(drop_root / "D")
+    res = discover_repositories([str(keep_root), str(drop_root)], EXCL)
+    dao.sync_discovered(conn, res.repositories, [str(keep_root), str(drop_root)])
+    assert {r["name"] for r in dao.list_repositories(conn)} == {"K", "D"}
+
+    # The "drop" root is removed from the config: D is still on disk but no longer monitored.
+    res = discover_repositories([str(keep_root)], EXCL)
+    stats = dao.sync_discovered(conn, res.repositories, [str(keep_root)], configured_roots=[str(keep_root)])
+    assert stats["deactivated"] == 1
+    assert {r["name"] for r in dao.list_repositories(conn)} == {"K"}
+    assert len(dao.list_repositories(conn, active_only=False)) == 2  # history kept
+
+    # A configured root that is temporarily missing keeps its repositories active.
+    res = discover_repositories([str(keep_root), str(drop_root)], EXCL)
+    dao.sync_discovered(conn, res.repositories, [str(keep_root), str(drop_root)],
+                        configured_roots=[str(keep_root), str(drop_root)])
+    assert {r["name"] for r in dao.list_repositories(conn)} == {"K", "D"}  # re-activated
+    missing = str(tmp_path / "unplugged")
+    stats = dao.sync_discovered(conn, res.repositories, [str(keep_root), str(drop_root)],
+                                configured_roots=[str(keep_root), str(drop_root), missing])
+    assert stats["deactivated"] == 0

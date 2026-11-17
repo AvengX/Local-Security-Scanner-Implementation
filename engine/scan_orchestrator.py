@@ -126,7 +126,9 @@ class ScanOrchestrator:
         try:
             # Missing roots must not deactivate repositories (could be an unplugged drive).
             present_roots = [r for r in self.cfg.repository_roots if r not in result.missing_roots]
-            stats = dao.sync_discovered(conn, result.repositories, present_roots)
+            # Repositories outside every configured root (a root removed in Settings) are deactivated.
+            stats = dao.sync_discovered(conn, result.repositories, present_roots,
+                                        configured_roots=self.cfg.repository_roots)
             set_setting(conn, "last_discovery_at", utcnow())
         finally:
             conn.close()

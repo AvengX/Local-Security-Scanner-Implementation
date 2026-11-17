@@ -16,6 +16,7 @@ from dashboard.common import (fmt_bytes, fmt_ts, get_config, get_conn, get_fresh
                               section, tool_health, trivy_db_location, vuln_db_state, db_health)
 from dashboard.states import _update_button
 from services import scheduling_service as sch
+from engine.scan_orchestrator import ScanOrchestrator
 from utils.config import AppConfig, save_config
 from utils.paths import config_path
 from utils.validators import GITLEAKS_MODES, SEVERITIES, TRIVY_SCAN_TYPES, TRIVY_SCANNERS
@@ -25,6 +26,19 @@ MAX_CONFIG_BACKUPS = 30
 
 def _lines(text: str) -> list[str]:
     return [ln.strip() for ln in text.replace(",", "\n").splitlines() if ln.strip()]
+
+
+def _rediscover(cfg: AppConfig) -> None:
+    """Refresh the repository list after the roots change (local, read-only; keeps all history)."""
+    try:
+        with st.spinner("Updating the repository list for the new roots…"):
+            result, stats = ScanOrchestrator(cfg).discover()
+    except Exception as exc:  # noqa: BLE001 — show, don't crash the settings page
+        notice("err", "Repository discovery failed", str(exc))
+        return
+    notice("ok", "Repository list updated",
+           f"{len(result.repositories)} repositories in the configured roots · {stats['new']} new · "
+           f"{stats['deactivated']} no longer monitored (their history is kept; add the root back to restore it).")
 
 
 def backup_config(cfg: AppConfig) -> Path | None:
@@ -193,6 +207,8 @@ def _config_tab(cfg: AppConfig) -> None:
                 missing = [r for r in new_cfg.repository_roots if not Path(r).is_dir()]
                 if missing:
                     notice("warn", "Some roots do not exist (saved anyway)", ", ".join(missing))
+                if new_cfg.repository_roots != cfg.repository_roots:
+                    _rediscover(new_cfg)
 
     with st.expander("Reset to defaults"):
         st.write("Replaces config.yaml with the built-in defaults, including an **empty** repository list. "
