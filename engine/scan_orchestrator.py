@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from database import repositories as dao
-from database.db import connect, init_db, set_setting, utcnow
+from database.db import connect, get_setting, init_db, set_setting, utcnow
 from engine.comparison_engine import apply_scan_results, mark_unverified_after_failure
 from engine.gitleaks_scanner import GitleaksScanner
 from engine.locks import JobLock, JobLockError
@@ -24,7 +24,23 @@ from engine.scanner_health import ToolStatus, check_gitleaks, check_trivy
 from engine.trivy_scanner import TrivyOptions, TrivyScanner
 from utils.config import AppConfig
 from utils.logger import get_logger
-from utils.paths import is_within
+from utils.paths import is_within, normalize_key
+
+DISCOVERY_ROOTS_KEY = "last_discovery_roots"
+
+
+def roots_signature(roots: list[str]) -> str:
+    """Order- and case-insensitive fingerprint of the configured repository roots."""
+    return "\n".join(sorted({normalize_key(r) for r in roots}))
+
+
+def roots_changed(conn: sqlite3.Connection, roots: list[str]) -> bool:
+    """True when the configured roots differ from those of the last discovery (e.g. config.yaml edited by hand).
+
+    Unknown (no discovery recorded yet) counts as unchanged, so nothing runs before the first explicit discovery."""
+    stored = get_setting(conn, DISCOVERY_ROOTS_KEY)
+    return stored is not None and stored != roots_signature(roots)
+
 
 log = get_logger(__name__)
 
@@ -130,6 +146,7 @@ class ScanOrchestrator:
             stats = dao.sync_discovered(conn, result.repositories, present_roots,
                                         configured_roots=self.cfg.repository_roots)
             set_setting(conn, "last_discovery_at", utcnow())
+            set_setting(conn, DISCOVERY_ROOTS_KEY, roots_signature(self.cfg.repository_roots))
         finally:
             conn.close()
         return result, stats

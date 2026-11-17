@@ -21,7 +21,7 @@ st.set_page_config(page_title="Local Security Scanner", page_icon=str(ROOT / "da
 
 from dashboard import (findings, history, misconfigurations, overview, reports, repositories, secrets,  # noqa: E402
                        settings, vapt, vulnerabilities)
-from dashboard.common import PAGES, get_config, get_conn, inject_css, notice, render_sidebar  # noqa: E402
+from dashboard.common import PAGES, get_config, get_conn, inject_css, notice, render_sidebar, sync_roots  # noqa: E402
 from utils.logger import setup_logging  # noqa: E402
 
 ASSETS = ROOT / "dashboard" / "assets"
@@ -64,8 +64,10 @@ def main() -> None:
         "Operate": [pages["repositories"], pages["history"], pages["reports"], pages["vapt"]],
         "System": [pages["settings"]],
     })
+    conn = get_conn(cfg)
+    sync_roots(cfg, conn)
     with st.sidebar:
-        render_sidebar(cfg, get_conn(cfg))
+        render_sidebar(cfg, conn)
     nav.run()
 
 

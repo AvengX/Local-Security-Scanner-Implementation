@@ -303,6 +303,22 @@ def page_header(title: str, subtitle: str, search: bool = False) -> None:
                 st.switch_page(PAGES["findings"])
 
 
+def sync_roots(cfg: AppConfig, conn: sqlite3.Connection) -> None:
+    """Re-discover repositories when config.yaml's roots changed outside the dashboard (e.g. edited in VS Code)."""
+    from engine.scan_orchestrator import ScanOrchestrator, roots_changed
+
+    try:
+        if not roots_changed(conn, cfg.repository_roots):
+            return
+        with st.spinner("Repository roots changed — updating the repository list…"):
+            result, stats = ScanOrchestrator(cfg).discover()
+    except Exception as exc:  # noqa: BLE001 — never block the dashboard on discovery
+        notice("err", "Could not refresh repositories for the new roots", str(exc))
+        return
+    st.toast(f"Roots changed: {len(result.repositories)} repositories · {stats['new']} new · "
+             f"{stats['deactivated']} no longer monitored", icon=":material/travel_explore:")
+
+
 def render_sidebar(cfg: AppConfig, conn: sqlite3.Connection) -> None:
     health = tool_health(cfg.trivy.executable, cfg.gitleaks.executable)
     f = get_freshness(cfg)

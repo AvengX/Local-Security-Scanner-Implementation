@@ -172,3 +172,16 @@ def test_sync_deactivates_repos_outside_configured_roots(tmp_path: Path) -> None
     stats = dao.sync_discovered(conn, res.repositories, [str(keep_root), str(drop_root)],
                                 configured_roots=[str(keep_root), str(drop_root), missing])
     assert stats["deactivated"] == 0
+
+
+def test_roots_changed_detects_hand_edited_config(tmp_path: Path, roots: Path) -> None:
+    from engine.scan_orchestrator import roots_changed
+
+    conn = init_db(tmp_path / "db.sqlite")
+    assert not roots_changed(conn, [str(roots)])  # nothing recorded yet -> no automatic discovery
+    from database.db import set_setting
+    from engine.scan_orchestrator import DISCOVERY_ROOTS_KEY, roots_signature
+
+    set_setting(conn, DISCOVERY_ROOTS_KEY, roots_signature([str(roots)]))
+    assert not roots_changed(conn, [str(roots).upper()])  # case-insensitive on Windows paths
+    assert roots_changed(conn, [str(roots), str(tmp_path / "new")])
