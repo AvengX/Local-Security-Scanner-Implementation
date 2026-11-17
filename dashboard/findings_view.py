@@ -84,8 +84,10 @@ def render_findings(kind: str) -> None:
         repos = sorted(df["repository"].unique().tolist())
         sel_repo = f1.multiselect("Repository", repos, key=f"{kind}_repo")
         sel_sev = f2.multiselect("Severity", list(SEVERITIES), key=f"{kind}_sev")
-        sel_status = f3.multiselect("Status", ["OPEN", "UNVERIFIED", "RESOLVED"], default=["OPEN", "UNVERIFIED"],
-                                    key=f"{kind}_status")
+        # Toggle chips instead of a dropdown: every option stays fully readable however narrow the column is.
+        sel_status = f3.pills("Status", ["OPEN", "UNVERIFIED", "RESOLVED"], selection_mode="multi",
+                              default=["OPEN", "UNVERIFIED"], format_func=str.title, key=f"{kind}_status",
+                              help="Click to turn a status on or off. None selected = show all.") or []
         if kind == "all":
             sel_cat = f4.multiselect("Category", list(CATEGORIES), key=f"{kind}_cat")
         else:

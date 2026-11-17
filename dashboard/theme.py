@@ -335,6 +335,8 @@ div[class*="st-key-wrap"] [data-testid="stColumn"] { min-width: min(100%, 360px)
 div[class*="st-key-actions"] [data-testid="stHorizontalBlock"] { flex-wrap: wrap; gap: .5rem; }
 div[class*="st-key-actions"] [data-testid="stColumn"] { min-width: 170px; flex: 1 1 170px !important; }
 div[class*="st-key-panel_filters"] [data-testid="stHorizontalBlock"] { flex-wrap: wrap; row-gap: .25rem; }
+/* Pills/segmented controls: wrap onto a second line instead of clipping the last option. */
+[data-testid="stButtonGroup"] > div { flex-wrap: wrap; row-gap: .35rem; overflow: visible !important; }
 div[class*="st-key-panel_filters"] [data-testid="stColumn"] { min-width: 180px; flex: 1 1 180px !important; }
 @media (max-width: 900px) { .lss-chips { justify-content: flex-start; } }
 
