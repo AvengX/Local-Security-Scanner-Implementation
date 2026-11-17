@@ -11,6 +11,8 @@ the parsed JSON report.
 
 from __future__ import annotations
 
+import dataclasses
+
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -28,6 +30,10 @@ log = get_logger(__name__)
 _DB_MISSING_MARKERS = ("--skip-db-update cannot be specified on the first run",
                        "first run cannot skip downloading db", "db not found", "vulnerability db is missing",
                        "failed to download vulnerability db", "the first run cannot skip")
+# Signs that Trivy could not reach its download server (no internet, DNS failure, proxy, TLS...).
+_NETWORK_MARKERS = ("no such host", "dial tcp", "i/o timeout", "connection refused", "connection reset",
+                    "tls handshake", "network is unreachable", "oci repository error", "failed to download",
+                    "context deadline exceeded", "proxyconnect")
 
 
 @dataclass
@@ -182,17 +188,42 @@ class TrivyScanner:
         ex.status = "COMPLETED_WITH_FINDINGS" if ex.findings else "COMPLETED"
         return ex
 
+    def _run_with_fallback(self, ex: ScanExecution, build, report: Path, opts: TrivyOptions,  # noqa: ANN001
+                           parse: bool = True, cwd: Path | None = None) -> ScanExecution:
+        """Run online; if Trivy only failed because it could not download its DB/checks and a cached DB
+        exists, rerun once with the cached data. The rerun is recorded as offline (never hidden)."""
+        ex = self._execute(ex, build(opts), report, opts, parse=parse, cwd=cwd)
+        if opts.offline or ex.status != "FAILED" or ex.exit_code in (None, 0):
+            return ex
+        low = (ex.error_message or "").lower()
+        if not any(m in low for m in _NETWORK_MARKERS):
+            return ex
+        if not trivy_db_freshness(opts.cache_dir, self.freshness_hours).present:
+            return ex
+        first_error = ex.error_message
+        log.warning("Trivy could not download updates; retrying with the cached vulnerability DB",
+                    extra={"scan_type": ex.scan_type, "error": (first_error or "")[:300]})
+        cached = dataclasses.replace(opts, offline=True)
+        report.unlink(missing_ok=True)
+        ex.status, ex.error_message, ex.offline = "PENDING", None, True
+        ex = self._execute(ex, build(cached), report, cached, parse=parse, cwd=cwd)
+        if ex.status == "FAILED":
+            ex.error_message = f"{ex.error_message} (after download failure: {first_error})"
+        return ex
+
     def scan_fs(self, target: Path, report: Path, opts: TrivyOptions) -> ScanExecution:
         ex = self._base("fs", ".", opts)
         if not self._preflight(ex, opts, needs_db="vuln" in opts.scanners):
             return ex
-        return self._execute(ex, self.build_fs_command(Path("."), report, opts), report, opts, cwd=target)
+        return self._run_with_fallback(ex, lambda o: self.build_fs_command(Path("."), report, o), report, opts,
+                                       cwd=target)
 
     def scan_config(self, target: Path, report: Path, opts: TrivyOptions) -> ScanExecution:
         ex = self._base("config", ".", opts)
         if not self._preflight(ex, opts, needs_db=False):
             return ex
-        return self._execute(ex, self.build_config_command(Path("."), report, opts), report, opts, cwd=target)
+        return self._run_with_fallback(ex, lambda o: self.build_config_command(Path("."), report, o), report, opts,
+                                       cwd=target)
 
     def scan_image(self, image: str, report: Path, opts: TrivyOptions) -> ScanExecution:
         ex = self._base("image", image, opts)
@@ -201,14 +232,14 @@ class TrivyScanner:
             return ex
         if not self._preflight(ex, opts, needs_db="vuln" in opts.scanners):
             return ex
-        return self._execute(ex, self.build_image_command(image, report, opts), report, opts)
+        return self._run_with_fallback(ex, lambda o: self.build_image_command(image, report, o), report, opts)
 
     def generate_sbom(self, target: Path, report: Path, opts: TrivyOptions) -> ScanExecution:
         ex = self._base("sbom", ".", opts, coverage=False)
         if not self._preflight(ex, opts, needs_db=False):
             return ex
-        return self._execute(ex, self.build_sbom_command(Path("."), report, opts), report, opts, parse=False,
-                             cwd=target)
+        return self._run_with_fallback(ex, lambda o: self.build_sbom_command(Path("."), report, o), report, opts,
+                                       parse=False, cwd=target)
 
     def update_databases(self, cache_dir: str | None, timeout: int = 1800) -> list[tuple[str, bool, str]]:
         results: list[tuple[str, bool, str]] = []

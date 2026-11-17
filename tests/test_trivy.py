@@ -157,3 +157,45 @@ def test_real_trivy_config_scan(cfg, tmp_path: Path) -> None:  # pragma: no cove
     (repo / "Dockerfile").write_text("FROM alpine:3.10\nRUN echo hi\n")
     ex = TrivyScanner(check_trivy()).scan_config(repo, tmp_path / "out.json", opts(cfg))
     assert ex.status in ("COMPLETED", "COMPLETED_WITH_FINDINGS"), ex.error_message
+
+
+NET_ERR = ("FATAL Fatal error run error: init error: DB error: failed to download vulnerability DB: OCI "
+           "repository error: Get \"https://mirror.gcr.io/v2/\": dial tcp: lookup mirror.gcr.io: no such host")
+
+
+def _flaky_runner(payload):  # first call: network failure, second call: success
+    ok = fake_process(payload)
+    calls: list[list[str]] = []
+
+    def _run(args, timeout, tool, cwd=None):
+        calls.append(args)
+        if len(calls) == 1:
+            return fake_process(None, exit_code=1, stderr=NET_ERR)(args, timeout, tool, cwd)
+        return ok(args, timeout, tool, cwd)
+
+    _run.calls = calls
+    return _run
+
+
+def test_download_failure_falls_back_to_cached_db(cfg, tmp_path: Path, all_flags, trivy_db, monkeypatch) -> None:
+    runner = _flaky_runner(load_fixture("trivy_fs.json"))
+    monkeypatch.setattr("engine.trivy_scanner.run_process", runner)
+    ex = TrivyScanner(tool("trivy")).scan_fs(tmp_path, tmp_path / "r.json", opts(cfg))
+    assert len(runner.calls) == 2
+    assert "--skip-db-update" not in runner.calls[0] and "--skip-db-update" in runner.calls[1]
+    assert ex.status == "COMPLETED_WITH_FINDINGS" and ex.offline is True and ex.error_message is None
+
+
+def test_download_failure_without_cached_db_stays_failed(cfg, tmp_path: Path, all_flags, monkeypatch) -> None:
+    runner = _flaky_runner(load_fixture("trivy_fs.json"))
+    monkeypatch.setattr("engine.trivy_scanner.run_process", runner)
+    ex = TrivyScanner(tool("trivy")).scan_fs(tmp_path, tmp_path / "r.json", opts(cfg))
+    assert len(runner.calls) == 1 and ex.status == "FAILED"  # no cache: never pretend it worked
+    assert "update-databases" in ex.error_message
+
+
+def test_non_network_failure_is_not_retried(cfg, tmp_path: Path, all_flags, trivy_db, monkeypatch) -> None:
+    runner = fake_process(None, exit_code=1, stderr="FATAL unknown flag --bogus")
+    monkeypatch.setattr("engine.trivy_scanner.run_process", runner)
+    ex = TrivyScanner(tool("trivy")).scan_fs(tmp_path, tmp_path / "r.json", opts(cfg))
+    assert len(runner.calls) == 1 and ex.status == "FAILED"
