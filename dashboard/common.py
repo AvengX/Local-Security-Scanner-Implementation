@@ -126,6 +126,42 @@ def is_queued(key: str) -> bool:
     return bool(ts and time.time() - ts < QUEUE_GRACE_SECONDS)
 
 
+def queued_at(key: str) -> float | None:
+    return st.session_state.get("lss_queued", {}).get(key)
+
+
+def clear_queued(key: str) -> None:
+    st.session_state.get("lss_queued", {}).pop(key, None)
+
+
+def scans_started_since(conn: sqlite3.Connection, ts: float, repo_path: str | None = None) -> int:
+    """Scanner runs created after a launch time (used to tell a just-queued job has actually run)."""
+    iso = datetime.fromtimestamp(ts, timezone.utc).replace(microsecond=0).isoformat()
+    sql = ("SELECT COUNT(*) FROM scan_runs s JOIN repositories r ON r.id=s.repository_id "
+           "WHERE COALESCE(s.started_at, s.finished_at) >= ?")
+    params: list[Any] = [iso]
+    if repo_path:
+        sql += " AND r.path=?"
+        params.append(repo_path)
+    return conn.execute(sql, params).fetchone()[0]
+
+
+def watch_until_idle(is_busy: Any, key: str, interval: str = "3s") -> None:
+    """While a background job runs, re-check every few seconds and refresh the page once it finishes.
+
+    Implemented as a Streamlit fragment, so only this tiny check reruns until the state changes."""
+
+    @st.fragment(run_every=interval)
+    def _watch() -> None:
+        if not is_busy():
+            tool_health.clear()
+            st.rerun(scope="app")
+        st.caption(f":material/progress_activity: Checking every {interval[:-1]} s — the page updates "
+                   "automatically when the job finishes.")
+
+    _watch()
+
+
 def _python() -> str:
     py = PROJECT_ROOT / ".venv" / "Scripts" / "python.exe"
     return str(py) if py.is_file() else sys.executable

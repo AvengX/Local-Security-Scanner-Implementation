@@ -14,8 +14,8 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from dashboard import theme as t
-from dashboard.common import (ago, chart, fmt_ts, get_config, html, is_queued, launch_process, mark_queued, notice,
-                              page_header, section)
+from dashboard.common import (ago, chart, clear_queued, fmt_ts, get_config, html, is_queued, launch_process,
+                              mark_queued, notice, page_header, queued_at, section, watch_until_idle)
 from utils.paths import PROJECT_ROOT
 from utils.security import pid_alive
 
@@ -60,6 +60,20 @@ def _running() -> bool:
         return False
 
 
+def _busy() -> bool:
+    """Running if the test's marker process is alive, or it was just launched and has not produced results yet."""
+    if _running():
+        return True
+    if not is_queued("vapt"):
+        return False
+    results = LAB / "VAPT_TEST_RESULTS.json"
+    ts = queued_at("vapt") or 0
+    if results.is_file() and results.stat().st_mtime >= ts:
+        clear_queued("vapt")  # finished after it was launched from here
+        return False
+    return True
+
+
 def render() -> None:
     cfg = get_config()
     page_header("VAPT Lab", "End-to-end acceptance test against a disposable, intentionally vulnerable local lab")
@@ -72,7 +86,7 @@ def render() -> None:
 
     result = _load_json(LAB / "VAPT_TEST_RESULTS.json")
     hist = _history()
-    running = _running() or is_queued("vapt")
+    running = _busy()
     targets = [p.name for p in (LAB / "targets").iterdir() if p.is_dir()] if (LAB / "targets").is_dir() else []
 
     if result:
@@ -103,8 +117,9 @@ def render() -> None:
         c2.caption("Recreates the lab, runs discovery, full and offline scans, a remediation rescan, exports and a "
                    "secret-leak audit. Output: vapt_lab\\VAPT_TEST_RESULTS.md · log: logs\\vapt_runs.log")
     if running:
-        notice("info", "VAPT test in progress", "Press Refresh to update. Results appear here when it finishes.",
-               icon_name="activity")
+        notice("info", "VAPT test in progress", "Results appear here automatically when it finishes (about 1–2 "
+               "minutes). Progress is written to logs\vapt_runs.log.", icon_name="activity")
+        watch_until_idle(_busy, "vapt")
 
     section("Test scenario", "what the lab plants and the scanner must find")
     rows = "".join(f"<tr><td><b>{t.esc(n)}</b></td><td>{t.esc(k)}</td><td>{t.esc(d)}</td>"

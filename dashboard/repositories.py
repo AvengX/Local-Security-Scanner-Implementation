@@ -5,8 +5,9 @@ from __future__ import annotations
 import streamlit as st
 
 from dashboard import theme as t
-from dashboard.common import (PAGES, ago, fmt_ts, get_config, get_conn, html, is_queued, launch_background,
-                              mark_queued, notice, page_header, running_jobs, section)
+from dashboard.common import (PAGES, ago, clear_queued, fmt_ts, get_config, get_conn, html, is_queued,
+                              launch_background, mark_queued, notice, page_header, queued_at, running_jobs,
+                              scans_started_since, section, watch_until_idle)
 from dashboard.states import no_repositories, system_alerts
 from database import repositories as dao
 from services import analytics_service as an
@@ -16,9 +17,27 @@ STATE_TEXT = {"RUNNING": "● Running", "PENDING": "◌ Queued", "QUEUED": "◌ 
               "CANCELLED": "– Cancelled", "SKIPPED": "– Skipped", "NEVER": "○ Not scanned"}
 
 
+def _settle_queued(conn) -> None:  # noqa: ANN001
+    """Drop 'queued' markers for jobs that have started and finished, so buttons re-enable straight away."""
+    if running_jobs(conn):
+        return
+    for key in list(st.session_state.get("lss_queued", {})):
+        if key == "scan-all" or key.startswith("repo:"):
+            ts = queued_at(key) or 0
+            if scans_started_since(conn, ts, None if key == "scan-all" else key[5:]):
+                clear_queued(key)
+
+
+def _busy(conn) -> bool:  # noqa: ANN001
+    _settle_queued(conn)
+    return bool(running_jobs(conn)) or any(
+        is_queued(k) for k in st.session_state.get("lss_queued", {}) if k == "scan-all" or k.startswith("repo:"))
+
+
 def render() -> None:
     cfg = get_config()
     conn = get_conn(cfg)
+    _settle_queued(conn)
     page_header("Repositories", "Discover Git repositories under your configured folders and launch scans")
     system_alerts(cfg, "repo")
 
@@ -58,8 +77,8 @@ def render() -> None:
         if not jobs:
             lines = "<li><div class='grow'><div class='t'>Starting…</div><div class='s'>The scan job was launched; " \
                     "scanner runs appear here within a few seconds.</div></div></li>"
-        notice("info", "Scanning in progress — press Refresh to update", body_html=f"<ul class='lss-list'>{lines}</ul>",
-               icon_name="activity")
+        notice("info", "Scanning in progress", body_html=f"<ul class='lss-list'>{lines}</ul>", icon_name="activity")
+        watch_until_idle(lambda: _busy(conn), "repo_scan")
 
     df = an.repository_table(conn)
     if df.empty:
