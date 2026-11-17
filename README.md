@@ -62,7 +62,8 @@ powershell -ExecutionPolicy Bypass -File .\scripts\start.ps1     # opens http://
 ```
 
 **6. Point it at your projects.** In the dashboard, open **Settings → Configuration → 1 · Repository roots**,
-enter your folders one per line (for example `C:\Users\you\source\repos`) and press **Validate and save**.
+press **Browse for a folder…** to pick a folder in the normal Windows dialog (or type/paste paths, one per line),
+then press **Validate and save**.
 Alternatively, edit `config.yaml`:
 ```yaml
 repository_roots: ['C:\Users\you\source\repos', 'D:\Projects']
@@ -166,7 +167,7 @@ Click a row for the fix.
 * It never touches your real projects.
 
 **Settings**
-* **Configuration:** project folders, folders to skip (`node_modules`, `.venv`…), scan timeout, parallel scans, offline mode, scanners on or off, storage paths.
+* **Configuration:** project folders (**Browse for a folder…** opens the Windows folder picker), folders to skip (`node_modules`, `.venv`…), scan timeout, parallel scans, offline mode, scanners on or off, storage paths.
   **Validate and save** backs up the old settings first. **Reset to defaults** asks for confirmation.
 * **Scanners & vulnerability DB:** tool status and versions; **Update vulnerability database** (needs internet).
 * **Database & backups:** size and health of the results database; **Back up database now**.

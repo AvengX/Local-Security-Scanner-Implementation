@@ -281,3 +281,41 @@ def test_vapt_page_without_and_with_results(env, tmp_path, monkeypatch) -> None:
     res = AppTest.from_string(script, default_timeout=60).run()
     assert not res.exception
     assert "1/2" in " ".join(m.value for m in res.markdown)
+
+
+def test_folder_picker_results(monkeypatch) -> None:
+    import subprocess
+
+    from utils import folder_picker as fp
+
+    def fake(out: str, code: int = 0, err: str = ""):
+        return lambda *a, **k: subprocess.CompletedProcess(a, code, out, err)
+
+    monkeypatch.setattr(fp.subprocess, "run", fake("D:/STUDY/Projects"))
+    assert fp.pick_folder() == str(Path("D:/STUDY/Projects"))  # Tk's forward slashes become a Windows path
+    monkeypatch.setattr(fp.subprocess, "run", fake(""))
+    assert fp.pick_folder() is None  # cancelled
+    monkeypatch.setattr(fp.subprocess, "run", fake("", 1, "TclError: no display"))
+    with pytest.raises(fp.FolderPickerError):
+        fp.pick_folder()
+
+
+def test_settings_browse_adds_root(env, tmp_path) -> None:
+    picked = tmp_path / "picked_projects"
+    picked.mkdir()
+    root = str(Path(APP).parent)
+    script = "\n".join([
+        "import sys", f"sys.path.insert(0, r'{root}')",
+        "import utils.folder_picker as fp",
+        f"fp.pick_folder = lambda *a, **k: r'{picked}'",
+        "from dashboard.common import inject_css", "from dashboard import settings",
+        "inject_css()", "settings.render()"])
+    at = AppTest.from_string(script, default_timeout=60).run()
+    assert not at.exception
+    before = at.text_area(key="roots_text").value
+    at.button(key="roots_browse").click().run()
+    assert not at.exception
+    value = at.text_area(key="roots_text").value
+    assert str(picked) in value and value.startswith(before.strip())
+    # Saving is still an explicit step: config.yaml is unchanged until "Validate and save".
+    assert str(picked) not in Path(os.environ["LSS_CONFIG"]).read_text(encoding="utf-8")

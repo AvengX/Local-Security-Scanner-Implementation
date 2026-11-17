@@ -75,10 +75,48 @@ def render() -> None:
         _sched_tab(cfg)
 
 
+def _browse_roots(cfg: AppConfig) -> None:
+    """Browse button: opens the Windows folder dialog and appends the chosen folder to the roots list."""
+    current = _lines(st.session_state.get("roots_text", ""))
+    b1, b2 = st.columns([1, 3], vertical_alignment="center")
+    if b1.button("Browse for a folder…", icon=":material/folder_open:", width="stretch", key="roots_browse",
+                 help="Opens the Windows folder picker on this PC"):
+        from utils.folder_picker import FolderPickerError, pick_folder
+
+        start = current[-1] if current else str(Path.home())
+        try:
+            with st.spinner("Waiting for you to choose a folder in the Windows dialog…"):
+                chosen = pick_folder("Select a folder that contains your Git projects", start)
+        except FolderPickerError as exc:
+            notice("err", "Could not open the folder picker", f"{exc} You can still type or paste the path below.")
+        else:
+            if not chosen:
+                st.toast("No folder selected", icon=":material/info:")
+            elif chosen.lower() in {c.lower() for c in current}:
+                st.toast(f"Already in the list: {chosen}", icon=":material/info:")
+            else:
+                st.session_state["roots_text"] = "\n".join([*current, chosen])
+                st.session_state["roots_added"] = chosen
+                st.rerun()
+    added = st.session_state.pop("roots_added", None)
+    if added:
+        b2.markdown(t.chip(f"Added {added} — press Validate and save to keep it", "info", "folder"),
+                    unsafe_allow_html=True)
+    else:
+        b2.caption("Pick a folder with the Windows dialog, or type/paste paths into the box below (one per line).")
+
+
 def _config_tab(cfg: AppConfig) -> None:
+    if "roots_sync" in st.session_state:  # set after save/reset, applied before the widget is created
+        st.session_state["roots_text"] = st.session_state.pop("roots_sync")
+    st.session_state.setdefault("roots_text", "\n".join(cfg.repository_roots))
+    flash = st.session_state.pop("settings_flash", None)
+    if flash:
+        notice(*flash)
+    section("1 · Repository roots", "folders that contain your Git projects (one per line, absolute paths)")
+    _browse_roots(cfg)
     with st.form("settings"):
-        section("1 · Repository roots", "folders that contain your Git projects (one per line, absolute paths)")
-        roots = st.text_area("Repository root directories", "\n".join(cfg.repository_roots),
+        roots = st.text_area("Repository root directories", key="roots_text",
                              placeholder="D:\\Projects\nC:\\Users\\you\\source\\repos", label_visibility="collapsed")
         section("2 · Discovery and scan exclusions")
         e1, e2 = st.columns(2)
@@ -163,7 +201,10 @@ def _config_tab(cfg: AppConfig) -> None:
         if st.button("Reset to defaults", icon=":material/restart_alt:", disabled=not confirm):
             backup = backup_config(cfg)
             save_config(AppConfig())
-            notice("ok", "Settings reset to defaults", f"Backup: {backup}" if backup else "")
+            st.session_state["roots_sync"] = ""
+            st.session_state["settings_flash"] = ("ok", "Settings reset to defaults",
+                                                  f"Backup: {backup}" if backup else "")
+            st.rerun()
     backups = sorted((cfg.data_dir / "config_backups").glob("config_*.yaml"), reverse=True)
     if backups:
         st.caption(f"{len(backups)} configuration backup(s) in {cfg.data_dir / 'config_backups'} · newest: "
