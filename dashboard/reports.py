@@ -11,6 +11,7 @@ from dashboard.common import (ROW_SELECT, selected_row, fmt_bytes, fmt_ts, get_c
                               section)
 from database import repositories as dao
 from services import analytics_service as an
+from services import audit_report as audit
 from services import export_service as ex
 from services.report_service import list_reports, read_report_for_run
 from utils.security import safe_report_path
@@ -62,8 +63,54 @@ def render() -> None:
     with st.expander("Preview summary"):
         st.markdown(md)
 
+    _audit_report(conn, cfg, repo)
     _saved_exports(cfg)
     _raw_reports(conn, cfg, repo_id)
+
+
+def _audit_report(conn, cfg, repo) -> None:  # noqa: ANN001
+    section("Detailed audit report", "full VAPT-style report for one repository · print to PDF from the browser")
+    if repo is None:
+        notice("neutral", "Choose one repository", "The detailed audit report covers a single repository. Pick it in "
+               "“Report scope” above.")
+        return
+    st.caption("Repository and scan metadata, executive summary, deduplicated counts, severity distribution, every "
+               "vulnerability with CVSS / CWE / fixed versions / dependency path, direct vs transitive, remediation, "
+               "secrets (never their values), misconfigurations, references and methodology.")
+    c1, c2 = st.columns([1, 3], vertical_alignment="center")
+    if c1.button("Generate audit report", icon=":material/assignment:", type="primary", width="stretch",
+                 key="audit_generate"):
+        try:
+            with st.spinner("Building the audit report…"):
+                name, doc, data = audit.generate_audit(conn, cfg, repo["id"])
+                path = ex.write_export(cfg.reports_dir, name, doc)
+        except Exception as exc:  # noqa: BLE001 — show the reason instead of a stack trace
+            notice("err", "Could not build the audit report", str(exc))
+            return
+        st.session_state["audit_last"] = {"repo_id": repo["id"], "path": str(path), "name": name,
+                                          "status": audit.scan_status(data), "active": len(data["active"]),
+                                          "vulns": len(data["vulns"]), "secrets": len(data["secrets"]),
+                                          "misconfs": len(data["misconfs"])}
+    last = st.session_state.get("audit_last")
+    if not last or last["repo_id"] != repo["id"]:
+        c2.caption("Generates an HTML file in reports/exports. Open it and choose Print → Save as PDF for a PDF copy.")
+        return
+    try:
+        path = safe_report_path(last["path"], cfg.reports_dir)
+    except (PermissionError, FileNotFoundError) as exc:
+        notice("err", "Report file not available", str(exc))
+        return
+    status, note = last["status"]
+    c2.markdown(f"<div class='lss-chips' style='justify-content:flex-start'>"
+                f"{t.chip(f'Scan status: {status}', 'ok' if status == 'COMPLETED' else 'warn', 'shield_check')}"
+                f"{t.chip(f'{last['vulns']} vulnerabilities', 'neutral', 'package')}"
+                f"{t.chip(f'{last['secrets']} secrets', 'neutral', 'key')}"
+                f"{t.chip(f'{last['misconfs']} misconfigurations', 'neutral', 'sliders')}</div>",
+                unsafe_allow_html=True)
+    d1, d2 = st.columns([1, 3], vertical_alignment="center")
+    d1.download_button("Download report (HTML)", path.read_bytes(), path.name, "text/html", icon=":material/download:",
+                       width="stretch", key="audit_download")
+    d2.caption(f"Saved to {path} · open it in a browser and choose Print → Save as PDF. {note}")
 
 
 def _saved_exports(cfg) -> None:  # noqa: ANN001

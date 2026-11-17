@@ -41,6 +41,76 @@ def _sev_text(s: str) -> str:
     return f"{t.SEVERITY_GLYPH.get(s, '○')} {s.title()}"
 
 
+@st.cache_data(ttl=60, show_spinner=False)
+def _coverage(repos: tuple[tuple[str, str], ...], skip: tuple[str, ...]) -> list:
+    from services.coverage_service import inspect_repository
+
+    return [inspect_repository(name, path, list(skip)) for name, path in repos]
+
+
+def _what_was_checked(cfg, conn, kind: str, empty: bool) -> None:  # noqa: ANN001
+    """Explain an empty page: which files Trivy could read in each project, and why nothing was found."""
+    repos = tuple((r["name"], r["path"]) for r in conn.execute(
+        "SELECT name, path FROM repositories WHERE active=1 ORDER BY name COLLATE NOCASE").fetchall())
+    covs = _coverage(repos, tuple(sorted({*cfg.scan.skip_dirs, *cfg.excluded_dirs})))
+    if kind == "vuln":
+        files = [(c.repository, d) for c in covs for d in c.dependency_files]
+        pinned = sum(d.pinned or 0 for _, d in files if d.checkable)
+        locks = sum(1 for _, d in files if d.checkable and d.total is None)
+        if empty:
+            if not files:
+                notice("neutral", "Nothing to check", "None of your projects has a dependency file that Trivy can read "
+                       "(requirements.txt, package-lock.json, poetry.lock, go.sum, …), so no libraries were checked. "
+                       "This is not a clean result.")
+            elif not pinned and not locks:
+                notice("warn", "No libraries could be checked",
+                       "Your projects list their libraries without exact versions (for example 'numpy' instead of "
+                       "'numpy==1.26.4'). Trivy needs the exact version to look up known flaws, so nothing was checked "
+                       "and an empty page here does not mean the libraries are safe. Fix: pin versions — run "
+                       "'pip freeze > requirements.txt' in the project's environment — then scan again.")
+            else:
+                what = " and ".join(x for x in (f"{pinned} library version(s) with an exact version" if pinned else "",
+                                                f"{locks} lockfile(s)" if locks else "") if x)
+                skipped = sum((d.total or 0) - (d.pinned or 0) for _, d in files if d.total is not None)
+                skipped += sum(1 for _, d in files if d.total is None and not d.checkable)
+                if skipped:
+                    notice("warn", "Only some libraries could be checked",
+                           f"Trivy checked {what} and found no known flaws, but {skipped} other librar"
+                           f"{'y was' if skipped == 1 else 'ies were'} not checked — they have no exact version, or "
+                           "sit in a file Trivy does not read. See the table below for each file and how to fix it.")
+                else:
+                    notice("ok", "No known vulnerabilities",
+                           f"Trivy checked {what} and found no known flaws.")
+        if not files:
+            if not empty:
+                st.caption("No dependency files found.")
+            return
+        rows = []
+        for repo, d in files:
+            can = (f"{d.pinned} of {d.total}" if d.total is not None else ("all (lockfile)" if d.checkable else "0"))
+            rows.append({"Project": repo, "File": d.path, "Type": d.ecosystem, "Libraries checked": can,
+                         "Why / what to do": d.note + (f" e.g. {', '.join(d.unpinned_examples[:3])}"
+                                                       if d.unpinned_examples and d.checkable else "")})
+        st.markdown("**What was checked**")
+        st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
+    else:
+        files = [(c.repository, kind_, path) for c in covs for kind_, path in c.config_files]
+        if empty:
+            if not files:
+                notice("neutral", "Nothing to check",
+                       "None of your projects contains a Dockerfile, docker-compose, Kubernetes, Helm or Terraform "
+                       "file — these are the files this check looks at. The page is empty because there is nothing to "
+                       "check, not because a problem was fixed.")
+            else:
+                notice("ok", "No unsafe settings found",
+                       f"Trivy checked {len(files)} configuration file(s) and none failed a check.")
+        if files:
+            st.markdown("**Configuration files checked**")
+            st.dataframe(pd.DataFrame(files, columns=["Project", "Kind", "File"]), hide_index=True, width="stretch")
+        elif not empty:
+            st.caption("No configuration files found.")
+
+
 def render_findings(kind: str) -> None:
     spec = KINDS[kind]
     cfg = get_config()
@@ -59,8 +129,10 @@ def render_findings(kind: str) -> None:
             "SELECT COUNT(*), COUNT(DISTINCT s.repository_id) FROM scan_runs s JOIN repositories r "
             "ON r.id=s.repository_id AND r.active=1 WHERE s.status IN ('COMPLETED','COMPLETED_WITH_FINDINGS')"
             + (" AND s.scanner='trivy'" if trivy_only else "")).fetchone()
-        if ok_runs:
-            who = "Trivy scan(s)" if trivy_only else "scanner run(s)"
+        if ok_runs and trivy_only:
+            _what_was_checked(cfg, conn, kind, empty=True)
+        elif ok_runs:
+            who = "scanner run(s)"
             notice("ok", f"No {spec['title'].lower()} found",
                    f"{ok_runs} successful {who} across {ok_repos} monitored repositor"
                    f"{'y' if ok_repos == 1 else 'ies'} reported none. This is a clean result, not missing data.")
@@ -69,6 +141,10 @@ def render_findings(kind: str) -> None:
                    "No scanner has completed successfully, so there is nothing to show. This does not mean the "
                    "repositories are clean. Start a scan from the Repositories page.")
         return
+
+    if kind in ("vuln", "misconf"):
+        with st.expander("What was checked in each project", icon=":material/fact_check:"):
+            _what_was_checked(cfg, conn, kind, empty=False)
 
     prefill_q = st.session_state.pop("findings_q", None)
     if prefill_q:

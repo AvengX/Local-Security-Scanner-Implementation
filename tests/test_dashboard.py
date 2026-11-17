@@ -361,3 +361,46 @@ def test_overview_counts_only_monitored_repositories(tmp_path) -> None:  # noqa:
     assert set(an.findings_frame(conn)["repository"]) == {"Keep"}
     assert set(an.scan_history(conn)["repository"]) == {"Keep"}
     assert len(an.findings_frame(conn, ids["Gone"])) == 1  # history kept and still reachable by id
+
+
+def test_reports_page_generates_audit_report(env) -> None:
+    populate(env)
+    at = page_app("reports").run()
+    assert not at.exception
+    assert not [b for b in at.button if b.key == "audit_generate"]  # combined scope -> asks for one repository
+    at.selectbox[0].set_value("Phoenix").run()
+    gen = [b for b in at.button if b.key == "audit_generate"]
+    assert gen
+    gen[0].click().run()
+    assert not at.exception
+    saved = list((env.reports_dir / "exports").glob("*_Phoenix_security_audit.html"))
+    assert len(saved) == 1
+    doc = saved[0].read_text(encoding="utf-8")
+    assert "Security Audit Report" in doc and "5. Detailed vulnerability findings" in doc
+
+
+def test_empty_vulnerabilities_page_explains_unpinned_requirements(env) -> None:
+    conn = init_db(env.db_path)
+    repo_dir = Path(env.repository_roots[0]) / "Loose"
+    repo_dir.mkdir(exist_ok=True)
+    (repo_dir / "requirements.txt").write_text("numpy\npandas\n", encoding="utf-8")
+    dao.sync_discovered(conn, [DiscoveredRepo("Loose", str(repo_dir), env.repository_roots[0])], env.repository_roots)
+    rid = dao.list_repositories(conn)[0]["id"]
+    run = dao.create_scan_run(conn, rid, "trivy", "fs", ".", "b", os.getpid())
+    dao.finish_scan_run(conn, run, status="COMPLETED", finished_at="2026-11-16T01:00:00+00:00", findings_count=0)
+    conn.close()
+    at = page_app("vulnerabilities").run()
+    text = " ".join(m.value for m in at.markdown)
+    assert "No libraries could be checked" in text and "No known vulnerabilities" not in text
+    at = page_app("misconfigurations").run()
+    text = " ".join(m.value for m in at.markdown)
+    assert "Nothing to check" in text
+
+
+def test_overview_has_plain_project_table_not_charts(env) -> None:
+    populate(env)
+    at = page_app("overview").run()
+    assert not at.exception
+    text = " ".join(m.value for m in at.markdown)
+    assert "Problems by project" in text and "Vulnerable libraries" in text
+    assert "Severity breakdown" not in text

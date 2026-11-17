@@ -5,12 +5,10 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 
 import pandas as pd
-import plotly.express as px
-import plotly.graph_objects as go
 import streamlit as st
 
 from dashboard import theme as t
-from dashboard.common import (PAGES, ago, chart, get_config, get_conn, get_freshness, html, page_header, section,
+from dashboard.common import (PAGES, ago, get_config, get_conn, get_freshness, html, page_header, section,
                               tool_health, vuln_db_state, db_health)
 from dashboard.states import no_repositories, system_alerts
 from services import analytics_service as an
@@ -88,67 +86,9 @@ def render() -> None:
         st.caption(f":material/help: {m['unverified']} findings are UNVERIFIED — a later scan failed or did not cover "
                    "them, so they are kept (never auto-resolved).")
 
-    with st.container(key="wrap_charts1"):
-        c1, c2 = st.columns(2)
-        with c1, st.container(key="panel_sev"):
-            sdf = pd.DataFrame({"severity": list(SEVERITIES), "count": [sev[s] for s in SEVERITIES]})
-            sdf = sdf[sdf["count"] > 0]
-            if sdf.empty:
-                html(t.notice("ok", "No open findings", "Nothing to break down by severity."))
-            else:
-                fig = go.Figure(go.Pie(labels=[s.title() for s in sdf["severity"]], values=sdf["count"], hole=.62,
-                                       marker=dict(colors=[t.SEVERITY_COLORS[s] for s in sdf["severity"]],
-                                                   line=dict(color=t.BG, width=2)),
-                                       textinfo="value", sort=False, hovertemplate="%{label}: %{value}<extra></extra>"))
-                fig.add_annotation(text=f"<b>{open_total}</b><br><span style='font-size:11px'>open</span>",
-                                   showarrow=False, font=dict(size=20, color=t.TEXT))
-                chart(fig, 290, "Severity breakdown", key="ov_sev")
-        with c2, st.container(key="panel_cat"):
-            cdf = pd.DataFrame([(k.title(), v, t.CATEGORY_COLORS[k]) for k, v in cat.items() if v],
-                               columns=["category", "count", "color"]).sort_values("count")
-            if cdf.empty:
-                html(t.notice("ok", "No open findings", "Nothing to break down by category."))
-            else:
-                fig = go.Figure(go.Bar(x=cdf["count"], y=cdf["category"], orientation="h", marker_color=cdf["color"],
-                                       text=cdf["count"], textposition="outside", cliponaxis=False,
-                                       hovertemplate="%{y}: %{x}<extra></extra>"))
-                chart(fig, 290, "Vulnerability distribution by category", legend=False, key="ov_cat")
-
-    rdf = an.findings_by_repository(conn)
-    if not rdf.empty:
-        with st.container(key="panel_repo"):
-            order = rdf.groupby("repository")["findings"].sum().sort_values().index.tolist()
-            fig = px.bar(rdf, y="repository", x="findings", color="severity", orientation="h",
-                         color_discrete_map=t.SEVERITY_COLORS,
-                         category_orders={"repository": order, "severity": list(SEVERITIES)})
-            fig.update_traces(hovertemplate="%{y}: %{x}<extra>%{fullData.name}</extra>")
-            chart(fig, max(220, 38 * len(order) + 110), "Open findings by repository", key="ov_repo")
-
-    with st.container(key="wrap_charts2"):
-        c3, c4 = st.columns(2)
-        with c3, st.container(key="panel_trend"):
-            tdf = an.change_trend(conn)
-            if tdf.empty:
-                html(t.notice("neutral", "No trend yet", "New vs resolved appears after the first scans."))
-            else:
-                piv = tdf.pivot_table(index="day", columns="change_type", values="count", fill_value=0).reset_index()
-                fig = go.Figure()
-                if "NEW" in piv:
-                    fig.add_bar(x=piv["day"], y=piv["NEW"], name="New", marker_color=t.DANGER)
-                if "RESOLVED" in piv:
-                    fig.add_bar(x=piv["day"], y=piv["RESOLVED"], name="Resolved", marker_color=t.SUCCESS)
-                fig.update_layout(barmode="group")
-                fig.update_xaxes(type="category")
-                chart(fig, 280, "New vs resolved findings", key="ov_nr")
-        with c4, st.container(key="panel_hist"):
-            odf = an.open_findings_trend(conn)
-            if odf.empty:
-                html(t.notice("neutral", "No history yet", "The trend appears after successful scans."))
-            else:
-                fig = px.area(odf, x="day", y="findings", color="severity", color_discrete_map=t.SEVERITY_COLORS,
-                              category_orders={"severity": list(SEVERITIES)})
-                fig.update_xaxes(type="category")
-                chart(fig, 280, "Findings observed by scans over time", key="ov_hist")
+    with st.container(key="panel_by_project"):
+        section("Problems by project", "open + unverified · each problem counted once")
+        html(_by_project_html(conn))
 
     with st.container(key="wrap_bottom"):
         b1, b2, b3 = st.columns([1.25, 1.25, 1])
@@ -174,6 +114,39 @@ def render() -> None:
         with b3, st.container(key="panel_health"):
             section("Scanner health")
             html(_health_html(cfg, conn))
+
+
+def _by_project_html(conn) -> str:  # noqa: ANN001
+    """Plain table instead of charts: what kind of problem, how many, and the most serious one, per project."""
+    repos = an.repository_table(conn)
+    fdf = an.findings_frame(conn)
+    act = fdf[fdf["status"].isin(an.ACTIVE)].drop_duplicates(["repository", "dedup_key"]) if not fdf.empty else fdf
+    rows = []
+    for r in repos.itertuples():
+        f = act[act["repository"] == r.name] if not act.empty else act
+        cnt = f["category"].value_counts().to_dict() if not f.empty else {}
+        if r.state == "NEVER":
+            worst = "<span style='color:#94A3B8'>Not scanned yet</span>"
+        elif f.empty:
+            worst = "<span style='color:#22C55E'>No problems found</span>"
+        else:
+            worst = t.sev_badge(min(f["severity"], key=lambda s: SEVERITIES.index(s)))
+
+        def cell(n: int) -> str:
+            shown = str(n) if n else "<span style='color:#64748B'>0</span>"
+            return f"<td style='text-align:right'>{shown}</td>"
+
+        rows.append(f"<tr><td><b>{t.esc(r.name)}</b></td>{cell(cnt.get('VULNERABILITY', 0))}{cell(cnt.get('SECRET', 0))}"
+                    f"{cell(cnt.get('MISCONFIGURATION', 0))}<td>{worst}</td>"
+                    f"<td style='text-align:right'><b>{len(f)}</b></td></tr>")
+    head = ("<th>Project</th><th style='text-align:right'>Vulnerable libraries</th>"
+            "<th style='text-align:right'>Leaked secrets</th><th style='text-align:right'>Unsafe settings</th>"
+            "<th>Most serious</th><th style='text-align:right'>Total</th>")
+    return (f"<div class='lss-table-wrap'><table class='lss-table'><thead><tr>{head}</tr></thead>"
+            f"<tbody>{''.join(rows)}</tbody></table></div>"
+            "<div style='color:#94A3B8;font-size:.85rem;margin-top:.45rem'>Vulnerable libraries = third-party packages "
+            "with known security flaws · Leaked secrets = passwords, keys or tokens written in files · Unsafe settings "
+            "= risky Docker / cloud configuration.</div>")
 
 
 def _actions_html(conn, m: dict, hot: pd.DataFrame, cfg) -> str:  # noqa: ANN001

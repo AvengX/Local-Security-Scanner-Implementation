@@ -24,11 +24,12 @@ Repository Discovery Engine  (engine/repository_discovery.py)
      ▼
   SQLite                      (database/schema.sql, database/db.py, database/repositories.py)
      ▼
-  Analytics / Export services (services/analytics_service.py, export_service.py, report_service.py)
+  Analytics / Export services (services/analytics_service.py, export_service.py, report_service.py,
+                               audit_report.py)
      ▼
   Streamlit dashboard         (app.py, dashboard/*.py) – 127.0.0.1 only
      ▼
-  Local report export         (reports/exports/*.md|html|json|csv)
+  Local report export         (reports/exports/*.md|html|json|csv, *_security_audit.html)
 ```
 
 ## Key design decisions
@@ -59,4 +60,5 @@ Repository Discovery Engine  (engine/repository_discovery.py)
 | `utils/logger.py` | JSON-lines rotating log (`logs/scanner.log`) with a redaction filter. |
 | `engine/scanner_health.py` | Tool discovery (PATH, winget, scoop, choco), versions, Smart App Control detection, Trivy DB freshness from on-disk metadata. |
 | `engine/runner.py` | `Popen` execution, timeouts, Ctrl+C cancellation, stderr excerpts. |
+| `services/audit_report.py` | Detailed per-repository audit report (12 sections, print-ready HTML). Combines the findings database, the raw JSON of the latest successful `trivy fs` run (CVSS, CWE, dates, references, package graph from `--list-all-pkgs`) and read-only git metadata (`-c core.fsmonitor=false`; no `git status`). All text is HTML-escaped, links are http/https only with credentials stripped, and secret values are never available to it. |
 | `services/scheduling_service.py` | `schtasks` command construction, create/delete/query. |

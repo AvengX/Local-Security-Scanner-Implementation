@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-import plotly.express as px
 import streamlit as st
 
 from dashboard import theme as t
-from dashboard.common import (chart, fmt_ts, get_config, get_conn, html, notice, page_header, section)
+from dashboard.common import (fmt_ts, get_config, get_conn, html, notice, page_header, section)
 from dashboard.states import no_repositories
 from engine.comparison_engine import compare_runs
 from services import analytics_service as an
@@ -56,25 +55,6 @@ def render() -> None:
         t.metric_card("New findings", int(view["new_count"].sum()), f"{int(view['resolved_count'].sum())} resolved",
                       "warn", "activity"),
     ], min_width=150))
-
-    with st.container(key="wrap_hist_charts"):
-        t1, t2 = st.columns(2)
-        with t1, st.container(key="panel_hist_c1"):
-            sc = view.assign(day=view["started_at"].fillna("").str[:10]).groupby(["day", "status"]).size() \
-                .reset_index(name="scans")
-            fig = px.bar(sc, x="day", y="scans", color="status", color_discrete_map=t.STATUS_COLORS)
-            fig.update_xaxes(type="category")
-            chart(fig, 290, "Scanner runs per day", key="h_day")
-        with t2, st.container(key="panel_hist_c2"):
-            if ok.empty:
-                html(t.notice("neutral", "No successful scans in this selection", "Trends need successful runs."))
-            else:
-                o = ok.assign(label=ok["repository"] + " · " + ok["scanner"] + ":" + ok["scan_type"]).sort_values("started_at")
-                fig = px.line(o, x="started_at", y="findings_count", color="label", markers=True,
-                              hover_data=["new_count", "resolved_count"])
-                n = len(o["label"].unique())
-                fig.update_layout(legend=dict(orientation="h", yanchor="top", y=-0.18, x=0, xanchor="left"))
-                chart(fig, 290 + 18 * min(n, 8), "Findings per successful scan", legend=n <= 8, key="h_trend")
 
     section("All scanner runs", "failed runs keep their error message; they never clear existing findings")
     show = view.assign(started=view["started_at"].map(fmt_ts), tool=view["scanner"] + ":" + view["scan_type"],

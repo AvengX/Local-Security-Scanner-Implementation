@@ -97,6 +97,10 @@ class TrivyScanner:
         scanners = [s for s in opts.scanners if s in TRIVY_SCANNERS]
         args = self._common("fs", opts, report)
         args += ["--scanners", ",".join(scanners)]
+        # Record every package with its relationship (direct/indirect), dev flag and DependsOn graph so the
+        # audit report can show dependency paths. Findings are unaffected.
+        if "--list-all-pkgs" in self._flags("fs"):
+            args.append("--list-all-pkgs")
         if "--exit-code" in self._flags("fs"):
             args += ["--exit-code", "0"]
         return [*args, str(target)]

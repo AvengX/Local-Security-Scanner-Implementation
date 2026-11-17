@@ -19,14 +19,14 @@ Every number on every page is read from the local SQLite database. There is no s
 ## Pages
 | Page | What it shows | Actions |
 |---|---|---|
-| Overview | **Posture:** a level based on the highest open severity, with an explanation. Seven metrics: repositories, scanned, critical, high, secrets, misconfigurations, failed scans. Charts: severity breakdown, category distribution, findings by repository, new vs resolved, historical trend. Also latest scan activity, scanner and DB health, and recommended actions derived from open findings. | Global search, update vulnerability DB (when missing or stale), open scan history |
+| Overview | **Posture:** a level based on the highest open severity, with an explanation. Seven metrics: repositories, scanned, critical, high, secrets, misconfigurations, failed scans. **Problems by project:** plain table (vulnerable libraries, leaked secrets, unsafe settings, most serious, total) — charts were removed so every number reads as text. Also latest scan activity, scanner and DB health, and recommended actions derived from open findings. | Global search, update vulnerability DB (when missing or stale), open scan history |
 | Security Findings | **Every finding.** Filters: text, CVE/rule, package, repository, severity, status, category, scanner, first-seen date range. Severity counters. Table and CSV export. **Selecting a row** shows details: description as plain text, package and versions, fix version, reference link (http/https only), remediation, and finding history (every scan that saw, resolved or could not verify it). | Export CSV |
-| Vulnerabilities | Same view limited to dependency CVEs: package, installed version, fixed-in version. | Export CSV |
+| Vulnerabilities | Same view limited to dependency CVEs: package, installed version, fixed-in version. **What was checked:** each dependency file with how many libraries could be checked (exact versions only) and why others were skipped; an empty page says “No libraries could be checked” / “Only some libraries could be checked” instead of claiming clean. | Export CSV |
 | Secrets | Rule, file:line, *found in* (working tree vs Git history), commit, first/last detected, status. **Values are never stored, so they can never be shown.** | Export CSV |
-| Misconfigurations | Check ID, title, file, resource, repository. Description and remediation appear in the details. | Export CSV |
+| Misconfigurations | Check ID, title, file, resource, repository. Description and remediation appear in the details. **Configuration files checked** per project; “Nothing to check” when no Dockerfile / compose / Kubernetes / Helm / Terraform files exist. | Export CSV |
 | Repositories | **Status counters.** A searchable table with state (Running / Queued / Clean / Findings / Failed / Timed out / Not scanned), branch, last commit, last scan, duration and counts. **Details:** recent scans with errors. | Discover; scan all (offline toggle); scan one repository; jump to its findings or history. Scan buttons are disabled while a scan is running or was just queued, which prevents repeated requests. |
-| Scan History | **Run metrics:** success rate, failures, average duration. Charts: runs per day and findings per successful scan. **All runs:** table with exit code and error. **Comparison:** coverage-aware comparison of two scans of the *same* repository. | Filters, comparison |
-| Reports | Scope (combined or one repository). Exports generated now: CSV, JSON, Markdown, HTML. Saved export files. Raw Trivy/Gitleaks reports with date, status and size. Only files registered in the database *and* inside `reports/` can be downloaded. | Download, save all formats |
+| Scan History | **Run metrics:** success rate, failures, average duration. **All runs:** table with exit code and error. **Comparison:** coverage-aware comparison of two scans of the *same* repository. | Filters, comparison |
+| Reports | Scope (combined or one repository). Exports generated now: CSV, JSON, Markdown, HTML. Detailed audit report for one repository (12 sections, print-ready HTML; Print → Save as PDF). Saved export files. Raw Trivy/Gitleaks reports with date, status and size. Only files registered in the database *and* inside `reports/` can be downloaded. | Download, save all formats, generate audit report |
 | VAPT Lab | **Lab status.** Scenario table (planted weaknesses per lab repository). Checks by phase. Expected vs actual for all 45 checks, and run history. Only the generated lab is scanned, never `external_targets` or your repositories. | Run VAPT test (background, about 1–2 min) |
 | Settings | **Browse for a folder…** opens the Windows folder picker and adds the chosen folder to the repository roots. **Configuration**, in sections: roots, exclusions, scanning, scanners, storage, preferences. **Scanners & vulnerability DB:** health, DB location and freshness, update. **Database & backups:** integrity, size, row counts, backup now. **Scheduling:** instructions, dry-run preview of the exact PowerShell command, registered tasks. | Validate and save (backs up `config.yaml` first), reset to defaults (confirmation checkbox, backup first), re-check tools, update DB, back up database |
 
@@ -61,7 +61,7 @@ Defined in `dashboard/theme.py` and `.streamlit/config.toml`.
 * **Motion:** short hover and press transitions and a pulse on running states, all disabled under `prefers-reduced-motion`.
 * **Responsive:**
   * Metric cards use an auto-fit grid.
-  * Chart rows, filter rows and the top bar wrap on narrow windows.
+  * Filter rows and the top bar wrap on narrow windows.
   * Verified without horizontal scrolling at 1920×1080, 1600×900, 1366×768, 1024×768 and 800×600.
 
 ## Troubleshooting

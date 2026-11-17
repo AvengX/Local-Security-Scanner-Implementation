@@ -120,7 +120,8 @@ Every page answers one question. Full guide: [docs/UI_GUIDE.md](docs/UI_GUIDE.md
 * **Security posture:** one headline based on the worst open problem.
   *Critical exposure* (red) → *Elevated risk* (orange) → *Guarded* → *No open findings* (green).
 * **Seven cards:** repositories, scanned, critical, high, exposed secrets, misconfigurations, failed scans.
-* **Charts:** problems by severity, by type and by project; new versus fixed per day; trend over time.
+* **Problems by project:** a plain table — vulnerable libraries, leaked secrets and unsafe settings per project,
+  with the most serious level. (No charts: every number is shown as text.)
 * **Recommended actions:** a to-do list built from your results, for example "Upgrade happy-dom 20.14.6 → 21.0.4" or
   "Rotate credentials found in these files".
 * **Latest scan activity** and **Scanner health** panels.
@@ -152,13 +153,24 @@ Click a row for the fix.
 
 **Scan History**: a log of every scanner run.
 * **Cards:** runs, success rate, failures, average time.
-* **Charts:** scans per day; findings over time.
 * **Table:** duration, findings, new and fixed counts, error message.
 * **Compare two scans:** pick two scans of the same project to see what is new and what was fixed.
+
+**Vulnerabilities / Misconfigurations when empty**: the page says *why*. It lists each dependency file and how
+many libraries Trivy could actually check — libraries without an exact version (e.g. `numpy` instead of
+`numpy==1.26.4`) or files Trivy doesn't read (e.g. `requirements-train.txt`) are not checked, and the page says so
+instead of claiming a clean result. Misconfigurations explains when a project has no Dockerfile, docker-compose,
+Kubernetes, Helm or Terraform files to check.
 
 **Reports**: downloads.
 * Choose *all projects* or *one project*, then download **CSV**, **JSON**, **Markdown** or **HTML**.
 * **Save all formats to disk** writes them to `reports\exports`.
+* **Detailed audit report** (one project): click **Generate audit report** for a full VAPT-style report, then
+  download it or open the saved file and choose **Print → Save as PDF**. It has 12 numbered sections: repository and
+  scan metadata (commit, tool versions and binary SHA-256, exact commands, exit codes), an executive summary written
+  from the data, deduplicated counts, severity distribution, every vulnerability with CVSS / CWE / fixed versions /
+  dependency path, direct vs transitive, remediation commands, secrets (never their values), misconfigurations,
+  references, and methodology with limitations and raw-report checksums.
 * The original Trivy and Gitleaks output of each scan is also downloadable.
 
 **VAPT Lab**: a self-test for the scanner.
@@ -193,8 +205,8 @@ download a summary from **Reports** if someone else needs it.
 | Gitleaks | `git` (history, `--log-opts`) and `dir` (working tree) modes, custom config/allowlists, `--redact` |
 | Orchestration | scan-all / scan-repo, bounded concurrency, per-repo + job locks, timeouts, Ctrl+C cancellation, per-scan isolation, batch summaries |
 | Storage | SQLite with FKs, WAL, transactions, indexes, migrations, duplicate prevention, retention |
-| Dashboard | Dark security-operations UI: Overview (posture, metrics, trends, recommended actions, health), Security Findings, Vulnerabilities, Secrets, Misconfigurations, Repositories, Scan History, Reports, VAPT Lab, Settings — sidebar health panel, global search, finding history, guided empty/error states. See [docs/UI_GUIDE.md](docs/UI_GUIDE.md) |
-| Reports | Raw JSON per scan, CSV, consolidated JSON, Markdown/HTML summary, per-repository reports |
+| Dashboard | Dark security-operations UI: Overview (posture, metrics, problems-by-project table, recommended actions, health), Security Findings, Vulnerabilities, Secrets, Misconfigurations, Repositories, Scan History, Reports, VAPT Lab, Settings — sidebar health panel, global search, finding history, guided empty/error states. See [docs/UI_GUIDE.md](docs/UI_GUIDE.md) |
+| Reports | Raw JSON per scan, CSV, consolidated JSON, Markdown/HTML summary, per-repository reports, detailed VAPT-style audit report (HTML → PDF) |
 | Automation | Windows Task Scheduler (daily/weekly) with explicit confirmation |
 | Offline | Cached DB only, visible freshness/staleness, DB-missing detection |
 
@@ -272,6 +284,12 @@ Pages and states are described in [docs/UI_GUIDE.md](docs/UI_GUIDE.md). The late
 
 ## 16. Reports
 Raw: `reports/<Repo>_<id>/*.json`. Exports: `reports/exports/` via `run_scan.py report` or the Reports page.
+Detailed audit report for one repository (print-ready HTML; Print → Save as PDF):
+```powershell
+.\.venv\Scripts\python.exe run_scan.py audit --name LOAN_SYSTEM
+```
+It is built from the database, the raw JSON of the latest successful `trivy fs` run and read-only git metadata.
+Dependency paths need a scan made with this version (Trivy runs with `--list-all-pkgs`); older scans say so.
 Downloads are restricted to files registered in the DB **and** located inside `reports_dir`.
 
 ## 17. Troubleshooting

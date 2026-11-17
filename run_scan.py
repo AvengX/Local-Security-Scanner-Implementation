@@ -180,6 +180,24 @@ def cmd_report(cfg: AppConfig, args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def cmd_audit(cfg: AppConfig, args: argparse.Namespace) -> int:
+    from database import repositories as dao
+    from database.db import init_db
+    from services.audit_report import save_audit
+
+    conn = init_db(cfg.db_path)
+    matches = dao.find_repositories(conn, name=args.name, path=args.path)
+    if len(matches) != 1:
+        print(f"Repository not found or ambiguous ({len(matches)} matches). Use --name or --path; run 'discover' first.")
+        conn.close()
+        return EXIT_USAGE
+    path = save_audit(conn, cfg, matches[0]["id"])
+    conn.close()
+    print(f"Wrote {path}")
+    print("Open it in a browser and choose Print -> Save as PDF for a PDF copy.")
+    return EXIT_OK
+
+
 def cmd_update_databases(cfg: AppConfig, args: argparse.Namespace) -> int:
     from engine.scanner_health import check_trivy, trivy_db_freshness
     from engine.trivy_scanner import TrivyScanner
@@ -310,6 +328,11 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--repository", help="Limit to one repository")
     r.add_argument("--format", default="md,html,json,csv", help="Comma list of md,html,json,csv")
 
+    au = sub.add_parser("audit", help="Write the detailed security audit report (HTML) for one repository")
+    ag = au.add_mutually_exclusive_group(required=True)
+    ag.add_argument("--name", help="Repository name (as discovered)")
+    ag.add_argument("--path", help="Absolute repository path")
+
     u = sub.add_parser("update-databases", help="Download/refresh Trivy vulnerability databases (online)")
     u.add_argument("--force", action="store_true", help="Update even if offline mode is enabled")
     sub.add_parser("health", help="Check tools, versions and DB freshness")
@@ -331,7 +354,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 COMMANDS = {
     "init": cmd_init, "discover": cmd_discover, "scan-all": cmd_scan_all, "scan-repo": cmd_scan_repo,
-    "status": cmd_status, "report": cmd_report, "update-databases": cmd_update_databases,
+    "status": cmd_status, "report": cmd_report, "audit": cmd_audit, "update-databases": cmd_update_databases,
     "health": cmd_health, "schedule": cmd_schedule, "unschedule": cmd_unschedule, "prune": cmd_prune,
 }
 
