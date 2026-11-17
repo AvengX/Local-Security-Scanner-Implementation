@@ -7,17 +7,17 @@ repositories are never touched by this page.
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 
 import pandas as pd
-import plotly.graph_objects as go
 import streamlit as st
 
 from dashboard import theme as t
-from dashboard.common import (ago, chart, clear_queued, fmt_ts, get_config, html, is_queued, launch_process,
+from dashboard.common import (ago, clear_queued, fmt_ts, get_config, html, is_queued, launch_process,
                               mark_queued, notice, page_header, queued_at, section, watch_until_idle)
 from utils.paths import PROJECT_ROOT
-from utils.security import pid_alive
+from utils.security import same_process_alive
 
 LAB = PROJECT_ROOT / "vapt_lab"
 SCRIPT = PROJECT_ROOT / "vapt" / "run_vapt_test.py"
@@ -52,12 +52,28 @@ def _history() -> list[dict]:
     return out
 
 
-def _running() -> bool:
-    marker = LAB / "RUNNING.pid"
+MARKER_MAX_AGE = 3 * 3600  # a real test takes minutes; an older marker is a leftover from a killed run
+
+
+def marker_running(marker: Path) -> bool:
+    """True only if the marker's process is alive, is the same process (start time matches) and is recent.
+
+    A test killed from Task Manager leaves its marker behind; if Windows later reuses the PID for another
+    program, the start time no longer matches, so the page does not show "Running" forever."""
     try:
-        return marker.is_file() and pid_alive(int(marker.read_text(encoding="utf-8").strip()))
-    except (OSError, ValueError):
+        if not marker.is_file() or time.time() - marker.stat().st_mtime > MARKER_MAX_AGE:
+            return False
+        text = marker.read_text(encoding="utf-8").strip()
+        if text.startswith("{"):
+            data = json.loads(text)
+            return same_process_alive(int(data["pid"]), data.get("start"))
+        return same_process_alive(int(text), None)  # marker from an older version: PID only
+    except (OSError, ValueError, KeyError, TypeError):
         return False
+
+
+def _running() -> bool:
+    return marker_running(LAB / "RUNNING.pid")
 
 
 def _busy() -> bool:
@@ -133,27 +149,17 @@ def render() -> None:
         return
 
     checks = pd.DataFrame(result["checks"])
-    with st.container(key="wrap_vapt"):
-        c1, c2 = st.columns(2)
-        with c1, st.container(key="panel_vapt_phase"):
-            g = checks.groupby("phase")["passed"].agg(["sum", "count"]).reset_index()
-            fig = go.Figure()
-            fig.add_bar(y=g["phase"], x=g["sum"], name="Passed", orientation="h", marker_color=t.SUCCESS)
-            fig.add_bar(y=g["phase"], x=g["count"] - g["sum"], name="Failed", orientation="h", marker_color=t.DANGER)
-            fig.update_layout(barmode="stack")
-            fig.update_yaxes(autorange="reversed")
-            chart(fig, 300, "Checks by phase", key="vapt_phase")
-        with c2, st.container(key="panel_vapt_hist"):
-            if len(hist) < 2:
-                html(t.notice("neutral", "History builds up over runs",
-                              f"{len(hist)} run recorded so far. Each run adds a point to this chart."))
-            else:
-                h = pd.DataFrame(hist)
-                fig = go.Figure(go.Scatter(x=h["started"], y=h["passed"], mode="lines+markers", name="Passed",
-                                           line=dict(color=t.ACCENT)))
-                fig.add_scatter(x=h["started"], y=h["total"], mode="lines", name="Total",
-                                line=dict(color=t.FAINT, dash="dot"))
-                chart(fig, 300, "Historical VAPT runs", key="vapt_hist")
+    section("Checks by phase", "each phase of the test and how many of its checks passed")
+    g = checks.groupby("phase", sort=False)["passed"].agg(ok="sum", total="count").reset_index()
+    rows = "".join(
+        f"<tr><td><b>{t.esc(r.phase)}</b></td><td style='text-align:right'>{int(r.ok)}</td>"
+        f"<td style='text-align:right'>{int(r.total - r.ok)}</td><td>"
+        + (t.status_badge("COMPLETED", "All passed") if r.ok == r.total else
+           t.status_badge("FAILED", f"{int(r.total - r.ok)} failed")) + "</td></tr>"
+        for r in g.itertuples())
+    html("<div class='lss-table-wrap'><table class='lss-table'><thead><tr><th>Phase</th>"
+         "<th style='text-align:right'>Passed</th><th style='text-align:right'>Failed</th><th>Result</th></tr>"
+         f"</thead><tbody>{rows}</tbody></table></div>")
 
     section("Expected versus actual", f"{int(checks['passed'].sum())} of {len(checks)} checks passed · run "
             f"{fmt_ts(result.get('started'))} → {fmt_ts(result.get('finished'))}")

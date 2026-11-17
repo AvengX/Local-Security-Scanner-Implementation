@@ -280,7 +280,32 @@ def test_vapt_page_without_and_with_results(env, tmp_path, monkeypatch) -> None:
                                                 encoding="utf-8")
     res = AppTest.from_string(script, default_timeout=60).run()
     assert not res.exception
-    assert "1/2" in " ".join(m.value for m in res.markdown)
+    text = " ".join(m.value for m in res.markdown)
+    assert "1/2" in text and "Checks by phase" in text and "1 failed" in text  # plain table, no chart
+
+
+def test_vapt_marker_detects_reused_pid(tmp_path) -> None:
+    import json as _json
+    import time as _time
+
+    from dashboard.vapt import marker_running
+    from utils.security import process_start_time
+
+    marker = tmp_path / "RUNNING.pid"
+    assert not marker_running(marker)                                       # no marker
+    me = os.getpid()
+    marker.write_text(_json.dumps({"pid": me, "start": process_start_time(me)}), encoding="utf-8")
+    assert marker_running(marker)                                           # this very process
+    marker.write_text(_json.dumps({"pid": me, "start": process_start_time(me) - 500}), encoding="utf-8")
+    assert not marker_running(marker)                                       # same PID, different process
+    marker.write_text(_json.dumps({"pid": 999999, "start": 1.0}), encoding="utf-8")
+    assert not marker_running(marker)                                       # dead process
+    marker.write_text(_json.dumps({"pid": me, "start": process_start_time(me)}), encoding="utf-8")
+    old = _time.time() - 4 * 3600
+    os.utime(marker, (old, old))
+    assert not marker_running(marker)                                       # leftover from hours ago
+    marker.write_text(str(me), encoding="utf-8")
+    assert marker_running(marker)                                           # old PID-only format still read
 
 
 def test_folder_picker_results(monkeypatch) -> None:

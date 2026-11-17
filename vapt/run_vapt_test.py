@@ -305,7 +305,11 @@ class Vapt:
         started = datetime.now(timezone.utc).isoformat(timespec="seconds")
         self.lab.mkdir(parents=True, exist_ok=True)
         marker = self.lab / "RUNNING.pid"  # lets the dashboard show that a test is in progress
-        marker.write_text(str(os.getpid()), encoding="utf-8")
+        # PID + process start time: a later process that happens to reuse the PID is not mistaken for this test.
+        from utils.security import process_start_time
+
+        marker.write_text(json.dumps({"pid": os.getpid(), "start": process_start_time(os.getpid())}),
+                          encoding="utf-8")
         try:
             return self._run(started)
         finally:

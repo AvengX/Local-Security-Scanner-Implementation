@@ -78,6 +78,42 @@ def is_safe_cli_value(value: str) -> bool:
     return bool(value) and not value.startswith("-") and not any(ord(c) < 32 for c in value)
 
 
+def process_start_time(pid: int) -> float | None:
+    """Creation time of a running process (seconds, platform clock), or None if it can't be read.
+
+    Used together with the PID to tell "the same process" from "a new process that reused the PID"."""
+    if pid <= 0:
+        return None
+    if sys.platform == "win32":
+        PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+        kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+        handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+        if not handle:
+            return None
+        try:
+            ft = [ctypes.c_ulonglong() for _ in range(4)]  # creation, exit, kernel, user (FILETIME, 100 ns)
+            if kernel32.GetProcessTimes(handle, *(ctypes.byref(x) for x in ft)):
+                return ft[0].value / 1e7
+            return None
+        finally:
+            kernel32.CloseHandle(handle)
+    try:  # Linux: start time in clock ticks since boot (field 22 of /proc/<pid>/stat)
+        fields = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()
+        return int(fields[19]) / os.sysconf("SC_CLK_TCK")
+    except (OSError, ValueError, IndexError):
+        return None
+
+
+def same_process_alive(pid: int, start: float | None) -> bool:
+    """True if ``pid`` is running *and* (when ``start`` is known) is the same process that recorded it."""
+    if not pid_alive(pid):
+        return False
+    if start is None:
+        return True
+    now = process_start_time(pid)
+    return now is None or abs(now - start) < 1.0
+
+
 def pid_alive(pid: int) -> bool:
     """Return True if a process with ``pid`` is running. Never sends signals."""
     if pid <= 0:
