@@ -22,9 +22,10 @@ from utils.security import same_process_alive
 LAB = PROJECT_ROOT / "vapt_lab"
 SCRIPT = PROJECT_ROOT / "vapt" / "run_vapt_test.py"
 SCENARIO = [
-    ("vuln-python-app", "Dependencies + secrets",
+    ("vuln-python-app", "Dependencies + secrets + code (SAST)",
      "requests 2.25.0, urllib3 1.26.4, PyYAML 5.3, Jinja2 2.10; fake AWS key + GitHub token in code; a token only in "
-     "Git history; a fake token inside an untracked .venv (must be skipped)"),
+     "Git history; SQL injection, shell=True, pickle.loads, yaml.load and a hardcoded password in app/db.py; a fake "
+     "token and unsafe code inside an untracked .venv (must be skipped)"),
     ("vuln-node-app", "Dependencies", "lodash 4.17.15 and minimist 1.2.0 in package-lock.json"),
     ("insecure-infra", "Infrastructure as code", "Dockerfile (:latest, root, ADD from URL), privileged Kubernetes "
      "pod with hostNetwork, Terraform S3 without public-access block, SSH open to 0.0.0.0/0"),
@@ -130,8 +131,8 @@ def render() -> None:
             mark_queued("vapt")
             st.toast(f"VAPT test started (pid {pid}). Press Refresh in about two minutes.", icon=":material/science:")
             st.rerun()
-        c2.caption("Recreates the lab, runs discovery, full and offline scans, a remediation rescan, exports and a "
-                   "secret-leak audit. Output: vapt_lab\\VAPT_TEST_RESULTS.md · log: logs\\vapt_runs.log")
+        c2.caption("Recreates the lab, runs discovery, full and offline scans (incl. the SAST code scan), remediation "
+                   "rescans, exports and a secret-leak audit. Output: vapt_lab\\VAPT_TEST_RESULTS.md · log: logs\\vapt_runs.log")
     if running:
         notice("info", "VAPT test in progress", "Results appear here automatically when it finishes (about 1–2 "
                "minutes). Progress is written to logs\vapt_runs.log.", icon_name="activity")

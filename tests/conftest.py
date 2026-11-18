@@ -111,6 +111,7 @@ def cfg(tmp_path: Path, roots: Path) -> AppConfig:
         "paths": {"data_dir": str(app / "data"), "reports_dir": str(app / "reports"), "logs_dir": str(app / "logs")},
         "scan": {"timeout_seconds": 120, "concurrency": 1},
         "trivy": {"cache_dir": str(tmp_path / "trivy-cache")},
+        "sast": {"enabled": False},  # tests that need the code scan enable it explicitly
     })
 
 

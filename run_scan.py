@@ -143,7 +143,8 @@ def cmd_status(cfg: AppConfig, args: argparse.Namespace) -> int:
     fresh = trivy_db_freshness(cfg.trivy.cache_dir, cfg.scan.db_freshness_hours)
     print(f"Repositories: {m['repositories']} (scanned: {m['repositories_scanned']})")
     print("Open findings: " + ", ".join(f"{k}={v}" for k, v in m["severity"].items()))
-    print(f"Secrets: {m['category']['SECRET']}  Misconfigurations: {m['category']['MISCONFIGURATION']}  "
+    print(f"Secrets: {m['category']['SECRET']}  Code issues: {m['category']['CODE']}  "
+          f"Misconfigurations: {m['category']['MISCONFIGURATION']}  "
           f"Unverified: {m['unverified']}")
     print(f"Failed scans (latest per scanner): {m['failed_scans_latest']}  Total scans: {m['total_scans']}")
     print(f"Last successful scan: {m['last_successful_scan'] or 'never'}")
@@ -214,9 +215,9 @@ def cmd_update_databases(cfg: AppConfig, args: argparse.Namespace) -> int:
 
 
 def cmd_health(cfg: AppConfig, args: argparse.Namespace) -> int:
-    from engine.scanner_health import check_git, check_gitleaks, check_trivy, trivy_db_freshness
+    from engine.scanner_health import check_bandit, check_git, check_gitleaks, check_trivy, trivy_db_freshness
 
-    tools = [check_git(), check_trivy(cfg.trivy.executable), check_gitleaks(cfg.gitleaks.executable)]
+    tools = [check_git(), check_trivy(cfg.trivy.executable), check_gitleaks(cfg.gitleaks.executable), check_bandit()]
     print(f"Python {sys.version.split()[0]}   config: {config_path()}")
     ok = True
     for t in tools:
@@ -224,7 +225,8 @@ def cmd_health(cfg: AppConfig, args: argparse.Namespace) -> int:
         print(f"  {t.name:9} {state:14} {t.version or '':12} {t.path or ''}")
         if t.error:
             print(f"            -> {t.error}")
-        needed = (t.name == "trivy" and cfg.trivy.enabled) or (t.name == "gitleaks" and cfg.gitleaks.enabled)
+        needed = ((t.name == "trivy" and cfg.trivy.enabled) or (t.name == "gitleaks" and cfg.gitleaks.enabled)
+                  or (t.name == "bandit" and cfg.sast.enabled))
         ok &= t.usable or not needed
     fresh = trivy_db_freshness(cfg.trivy.cache_dir, cfg.scan.db_freshness_hours)
     print(f"  Vulnerability DB: {fresh.message}")

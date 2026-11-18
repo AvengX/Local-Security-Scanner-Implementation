@@ -55,6 +55,7 @@ class RepoCoverage:
     dependency_files: list[DependencyFile] = field(default_factory=list)
     config_files: list[tuple[str, str]] = field(default_factory=list)  # (kind, relative path)
     truncated: bool = False
+    python_files: int = 0           # .py files the code scan (Bandit) can check
 
     @property
     def checkable_files(self) -> int:
@@ -93,6 +94,9 @@ def inspect_repository(name: str, path: str, skip_dirs: list[str], max_depth: in
         depth = len(Path(cur).relative_to(root).parts)
         dirs[:] = [d for d in dirs if d.lower() not in skip and not d.startswith(".") and depth < max_depth]
         names = set(files)
+        cov.python_files += sum(1 for f in files if f.endswith(".py"))
+        if cov.truncated:
+            continue  # keep counting Python files, stop listing dependency / config files
         for fname in sorted(files):
             rel = (Path(cur) / fname).relative_to(root).as_posix()
             entry: DependencyFile | None = None
@@ -133,5 +137,5 @@ def inspect_repository(name: str, path: str, skip_dirs: list[str], max_depth: in
                 seen += 1
                 if seen >= max_files:
                     cov.truncated = True
-                    return cov
+                    break
     return cov

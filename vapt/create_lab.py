@@ -4,6 +4,7 @@ Everything here is a harmless static fixture used to prove the scanner detects w
 * outdated dependencies with published CVEs (never installed or executed),
 * insecure Dockerfile / Kubernetes / Terraform configuration (never deployed),
 * randomly generated fake credentials (syntactically valid, belong to no account),
+* insecure Python code patterns for the SAST check (never imported or run),
 * a clean repository to check for false positives.
 
 Fake tokens are generated fresh on every run and written to ``lab_secrets.json`` inside the lab so the
@@ -36,7 +37,33 @@ def fake_secrets() -> dict[str, str]:
         "github_pat_current": "ghp_" + _rand(string.ascii_letters + string.digits, 36),
         "github_pat_history": "ghp_" + _rand(string.ascii_letters + string.digits, 36),
         "github_pat_venv": "ghp_" + _rand(string.ascii_letters + string.digits, 36),
+        "sast_db_password": "pw-" + _rand(string.ascii_letters + string.digits, 20),
     }
+
+
+# Insecure code for the SAST (Bandit) check. Never imported or executed: it only has to be read.
+def insecure_code(password: str) -> str:
+    return (
+        "import pickle\n"
+        "import sqlite3\n"
+        "import subprocess\n\n"
+        "import yaml\n\n"
+        f'DB_PASSWORD = "{password}"\n\n\n'
+        "def find_user(name):\n"
+        "    conn = sqlite3.connect('users.db')\n"
+        "    return conn.execute(\"SELECT * FROM users WHERE name = '%s'\" % name).fetchall()\n\n\n"
+        "def ping(host):\n"
+        "    return subprocess.call('ping -n 1 ' + host, shell=True)\n\n\n"
+        "def load_session(blob):\n"
+        "    return pickle.loads(blob)\n\n\n"
+        "def load_config(text):\n"
+        "    return yaml.load(text, Loader=yaml.Loader)\n"
+    )
+
+
+SAFE_FIND_USER = ("def find_user(name):\n"
+                  "    conn = sqlite3.connect('users.db')\n"
+                  "    return conn.execute(\"SELECT * FROM users WHERE name = ?\", (name,)).fetchall()\n")
 
 
 def _git(cwd: Path, *args: str) -> None:
@@ -154,12 +181,14 @@ def create_lab(lab_dir: Path) -> dict[str, object]:
     _git(py, "commit", "-qam", "move token to environment")  # token remains in history only
     _write(py, {"app/aws.py": (f'AWS_ACCESS_KEY_ID = "{s["aws_access_key_id"]}"\n'
                                f'AWS_SECRET_ACCESS_KEY = "{s["aws_secret_access_key"]}"\n'),
-                "app/github.py": f'TOKEN = "{s["github_pat_current"]}"\n'})
+                "app/github.py": f'TOKEN = "{s["github_pat_current"]}"\n',
+                "app/db.py": insecure_code(s["sast_db_password"])})
     _git(py, "add", "-A")
     _git(py, "commit", "-qm", "add cloud client")
     # Untracked installed-dependency folder (as a real virtualenv would be): must be skipped by scans.
     _write(py, {".gitignore": ".venv/\n",
-                ".venv/Lib/site-packages/thirdparty/config.py": f'TOKEN = "{s["github_pat_venv"]}"\n'})
+                ".venv/Lib/site-packages/thirdparty/config.py": (f'TOKEN = "{s["github_pat_venv"]}"\n'
+                                                                  "import pickle\nDATA = pickle.loads(b'')\n")})
 
     # 2. Node app: vulnerable lodash / minimist in package-lock.json.
     _new_repo(targets, "vuln-node-app", {
@@ -182,6 +211,17 @@ def create_lab(lab_dir: Path) -> dict[str, object]:
     meta = {"targets": str(targets), "secrets": s}
     (lab_dir / "lab_secrets.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
     return meta
+
+
+def fix_sql_injection(lab_dir: Path) -> None:
+    """Simulate a code fix: switch find_user to a parameterised query (for the SAST RESOLVED check)."""
+    repo = lab_dir / "targets" / "vuln-python-app"
+    path = repo / "app" / "db.py"
+    text = path.read_text(encoding="utf-8")
+    start = text.index("def find_user(name):")
+    end = text.index("def ping(host):")
+    _write(repo, {"app/db.py": text[:start] + SAFE_FIND_USER + "\n\n" + text[end:]})
+    _git(repo, "commit", "-qam", "use a parameterised query")
 
 
 def upgrade_python_dependency(lab_dir: Path) -> None:

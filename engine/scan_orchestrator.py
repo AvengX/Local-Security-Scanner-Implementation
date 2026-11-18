@@ -20,7 +20,8 @@ from engine.gitleaks_scanner import GitleaksScanner
 from engine.locks import JobLock, JobLockError
 from engine.repository_discovery import DiscoveryResult, discover_repositories
 from engine.runner import CANCEL_EVENT, ScanExecution, cancel_all
-from engine.scanner_health import ToolStatus, check_gitleaks, check_trivy
+from engine.sast_scanner import BanditScanner, exclude_patterns
+from engine.scanner_health import ToolStatus, check_bandit, check_gitleaks, check_trivy
 from engine.trivy_scanner import TrivyOptions, TrivyScanner
 from utils.config import AppConfig
 from utils.logger import get_logger
@@ -103,7 +104,7 @@ def _safe_name(name: str) -> str:
 
 class ScanOrchestrator:
     def __init__(self, cfg: AppConfig, trivy_tool: ToolStatus | None = None,
-                 gitleaks_tool: ToolStatus | None = None) -> None:
+                 gitleaks_tool: ToolStatus | None = None, bandit_tool: ToolStatus | None = None) -> None:
         self.cfg = cfg
         cfg.ensure_dirs()
         self.db_path = cfg.db_path
@@ -114,6 +115,7 @@ class ScanOrchestrator:
         conn.close()
         self._trivy_tool = trivy_tool
         self._gitleaks_tool = gitleaks_tool
+        self._bandit_tool = bandit_tool
 
     # Tools are resolved lazily so 'discover' does not need scanners installed.
     @property
@@ -127,6 +129,12 @@ class ScanOrchestrator:
         if self._gitleaks_tool is None:
             self._gitleaks_tool = check_gitleaks(self.cfg.gitleaks.executable)
         return GitleaksScanner(self._gitleaks_tool)
+
+    @property
+    def bandit(self) -> BanditScanner:
+        if self._bandit_tool is None:
+            self._bandit_tool = check_bandit()
+        return BanditScanner(self._bandit_tool, self.cfg.data_dir / "tmp")
 
     def connect(self) -> sqlite3.Connection:
         return connect(self.db_path)
@@ -161,6 +169,8 @@ class ScanOrchestrator:
                 jobs.append(Job("trivy", "sbom"))
         if self.cfg.gitleaks.enabled:
             jobs += [Job("gitleaks", m) for m in self.cfg.gitleaks.modes]
+        if self.cfg.sast.enabled:
+            jobs.append(Job("bandit", "python"))
         return jobs
 
     def _report_path(self, repo: dict[str, Any], job: Job, run_id: int) -> Path:
@@ -199,6 +209,9 @@ class ScanOrchestrator:
             finally:
                 if gl_config and gl_config != g.config_path:
                     Path(gl_config).unlink(missing_ok=True)
+        if job.scanner == "bandit":
+            excludes = exclude_patterns(cfg.scan.skip_dirs, self._app_dirs_inside(repo_path))
+            return self.bandit.scan(repo_path, report, cfg.scan.timeout_seconds, excludes, cfg.sast.skip_tests)
         raise ValueError(f"Unknown job {job}")
 
     def _app_dirs_inside(self, repo_path: Path) -> list[str]:

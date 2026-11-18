@@ -71,9 +71,9 @@ def no_repositories(cfg: AppConfig, conn: sqlite3.Connection, key: str) -> None:
 def system_alerts(cfg: AppConfig, key: str) -> None:
     """Honest scanner / vulnerability-DB problems, each with a safe next step."""
     health = tool_health(cfg.trivy.executable, cfg.gitleaks.executable)
-    for name, label in (("trivy", "Trivy"), ("gitleaks", "Gitleaks")):
+    for name, label in (("trivy", "Trivy"), ("gitleaks", "Gitleaks"), ("bandit", "Bandit")):
         h = health[name]
-        enabled = cfg.trivy.enabled if name == "trivy" else cfg.gitleaks.enabled
+        enabled = {"trivy": cfg.trivy.enabled, "gitleaks": cfg.gitleaks.enabled, "bandit": cfg.sast.enabled}[name]
         if h["state"] == "ok" or not enabled:
             continue
         if h["label"] == "Blocked by Windows":

@@ -1,7 +1,7 @@
 # VAPT acceptance test
 
 A one-command, fully local test that proves the scanner finds what it should, stays quiet where it should,
-and never leaks secrets. It drives the **real application** (CLI, Trivy, Gitleaks, SQLite, exports) against
+and never leaks secrets. It drives the **real application** (CLI, Trivy, Gitleaks, Bandit, SQLite, exports) against
 a lab of intentionally vulnerable repositories created on the fly.
 
 ```powershell
@@ -38,24 +38,30 @@ Fake credentials are generated randomly on each run, belong to no account, and a
 `vapt_lab\lab_secrets.json` only so the leak audit can search for them. Dependencies are never installed
 or executed; IaC is never deployed.
 
-## Checks (45)
-1. **Health**: Trivy and Gitleaks runnable, Trivy DB cached and fresh.
+## Checks (55)
+1. **Health**: Trivy, Gitleaks and Bandit runnable, Trivy DB cached and fresh.
 2. **Discovery**: all 4 repositories found.
-3. **Scan**: `scan-all` exits 0; 20 runs (4 repos × Trivy fs/config/SBOM + Gitleaks git/dir) all succeed;
+3. **Scan**: `scan-all` exits 0; 24 runs (4 repos × Trivy fs/config/SBOM + Gitleaks git/dir + Bandit) all succeed;
    tool version and DB timestamp on every run.
 4. **Detection**: specific CVEs (e.g. CVE-2023-32681 in requests, lodash CVEs), CRITICAL/HIGH present,
    misconfigurations in each IaC file (privileged pod, open security group/public S3), secrets via both
    Gitleaks and Trivy, history-only secret found by `git` mode but not `dir` mode, revoke-and-rotate
    remediation, zero findings in the clean repo, SBOMs generated, no duplicate findings, a secret planted
    inside an untracked `.venv` is skipped by both scanners, working-tree paths are repository-relative.
+   **SAST**: SQL injection (B608), `shell=True` (B602), `pickle.loads` (B301), `yaml.load` (B506) and a
+   hardcoded password (B105) planted in `app/db.py` are found with file, line and remediation; repositories
+   without Python report no code issues; unsafe code inside `.venv` is skipped.
 5. **Remediation**: upgrade `requests`, rescan one repo → the CVE becomes RESOLVED, the history secret stays
-   OPEN, unfixed CVEs stay OPEN.
+   OPEN, unfixed CVEs stay OPEN. Then switch `find_user` to a parameterised query and rescan → B608 becomes
+   RESOLVED while the unfixed `shell=True` issue stays OPEN.
 6. **Offline**: `scan-all --offline` succeeds with the cached DB, runs flagged offline, still detects CVEs.
 7. **Reports**: md/html/json/csv exports, `status`, raw JSON reports kept locally.
-8. **Leak audit**: no planted secret value anywhere in the database, raw reports, exports or logs.
+8. **Leak audit**: no planted secret value (including the SAST fixture password) anywhere in the database, raw reports, exports or logs.
 
-## Reference run (2026-11-16, Trivy 0.76.2, Gitleaks 8.30.1, Windows 11)
-45/45 PASS. Highlights: 4 vulnerable Python packages (11 CRITICAL/HIGH), 6 lodash advisories,
+## Reference run (2026-11-18, Trivy 0.76.2, Gitleaks 8.30.1, Bandit 1.9.4, Windows 11)
+55/55 PASS, including 9 code issues in 3 files of vuln-python-app.
+
+Earlier reference run (2026-11-16, before SAST): 45/45 PASS. Highlights: 4 vulnerable Python packages (11 CRITICAL/HIGH), 6 lodash advisories,
 66 IaC misconfigurations (Dockerfile 10, Kubernetes 40, Terraform 16), secrets detected by both scanners,
 0 findings in the clean repository, 0 secret leaks.
 

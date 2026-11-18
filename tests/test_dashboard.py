@@ -21,7 +21,7 @@ from services import export_service as ex
 from utils.validators import SEVERITIES
 
 APP = str(Path(__file__).resolve().parent.parent / "app.py")
-PAGES = ["overview", "repositories", "findings", "vulnerabilities", "secrets", "misconfigurations", "history",
+PAGES = ["overview", "repositories", "findings", "vulnerabilities", "secrets", "code_issues", "misconfigurations", "history",
          "reports", "vapt", "settings"]
 
 
@@ -485,3 +485,30 @@ def test_misconfigurations_shown_when_findings_exist(env) -> None:
     conn.close()
     text = " ".join(m.value for m in page_app("overview").run().markdown)
     assert "Unsafe settings" in text
+
+
+def test_code_issues_page_and_overview_show_sast_findings(env) -> None:
+    from engine.sast_scanner import CATEGORY, parse_bandit_data
+
+    conn = init_db(env.db_path)
+    repo_dir = Path(env.repository_roots[0]) / "Coder"
+    (repo_dir / "app").mkdir(parents=True, exist_ok=True)
+    (repo_dir / "app" / "db.py").write_text("q = 'x%s' % y\n", encoding="utf-8")
+    dao.sync_discovered(conn, [DiscoveredRepo("Coder", str(repo_dir), env.repository_roots[0])], env.repository_roots)
+    rid = dao.list_repositories(conn)[0]["id"]
+    cov = Coverage("bandit", "python", ".", frozenset({CATEGORY}), frozenset(SEVERITIES))
+    run = dao.create_scan_run(conn, rid, "bandit", "python", ".", "b", os.getpid())
+    findings, _ = parse_bandit_data({"errors": [], "results": [{
+        "test_id": "B608", "test_name": "hardcoded_sql_expressions", "filename": "./app/db.py", "line_number": 12,
+        "issue_severity": "MEDIUM", "issue_confidence": "MEDIUM", "issue_text": "Possible SQL injection vector.",
+        "issue_cwe": {"id": 89}, "more_info": "https://bandit.readthedocs.io/", "code": "12 q = 'x%s' % y\n"}]})
+    apply_scan_results(conn, rid, run, cov, findings)
+    dao.finish_scan_run(conn, run, status="COMPLETED_WITH_FINDINGS", finished_at="2026-11-18T01:00:00+00:00",
+                        findings_count=1, coverage=cov.key())
+    conn.close()
+    at = page_app("code_issues").run()
+    assert not at.exception
+    tables = " ".join(d.value.to_string() for d in at.dataframe)
+    assert "B608" in tables and "app/db.py:12" in tables
+    text = " ".join(m.value for m in page_app("overview").run().markdown)
+    assert "Code issues" in text

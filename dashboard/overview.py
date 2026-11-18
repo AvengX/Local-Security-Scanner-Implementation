@@ -76,6 +76,8 @@ def render() -> None:
         t.metric_card("Critical", sev["CRITICAL"], "open + unverified", t.SEVERITY_COLORS["CRITICAL"], "flame"),
         t.metric_card("High", sev["HIGH"], "open + unverified", t.SEVERITY_COLORS["HIGH"], "alert"),
         t.metric_card("Exposed secrets", cat["SECRET"], "values never stored", t.CATEGORY_COLORS["SECRET"], "key"),
+        t.metric_card("Code issues", cat["CODE"], "risky patterns in your code", t.CATEGORY_COLORS["CODE"], "code",
+                      aria=f"Code issues: {cat['CODE']}"),
         *([t.metric_card("Misconfigs", cat["MISCONFIGURATION"], "IaC / Dockerfile settings",
                          t.CATEGORY_COLORS["MISCONFIGURATION"], "sliders",
                          aria=f"Misconfigurations: {cat['MISCONFIGURATION']}")] if show_misconf else []),
@@ -138,16 +140,18 @@ def _by_project_html(conn, show_misconf: bool = True) -> str:  # noqa: ANN001
             return f"<td style='text-align:right'>{shown}</td>"
 
         rows.append(f"<tr><td><b>{t.esc(r.name)}</b></td>{cell(cnt.get('VULNERABILITY', 0))}{cell(cnt.get('SECRET', 0))}"
+                    f"{cell(cnt.get('CODE', 0))}"
                     f"{cell(cnt.get('MISCONFIGURATION', 0)) if show_misconf else ''}<td>{worst}</td>"
                     f"<td style='text-align:right'><b>{len(f)}</b></td></tr>")
     head = ("<th>Project</th><th style='text-align:right'>Vulnerable libraries</th>"
-            "<th style='text-align:right'>Leaked secrets</th>"
+            "<th style='text-align:right'>Leaked secrets</th><th style='text-align:right'>Code issues</th>"
             + ("<th style='text-align:right'>Unsafe settings</th>" if show_misconf else "") +
             "<th>Most serious</th><th style='text-align:right'>Total</th>")
     return (f"<div class='lss-table-wrap'><table class='lss-table'><thead><tr>{head}</tr></thead>"
             f"<tbody>{''.join(rows)}</tbody></table></div>"
             "<div style='color:#94A3B8;font-size:.85rem;margin-top:.45rem'>Vulnerable libraries = third-party packages "
-            "with known security flaws · Leaked secrets = passwords, keys or tokens written in files"
+            "with known security flaws · Leaked secrets = passwords, keys or tokens written in files · Code issues = "
+            "risky patterns in your own code, such as SQL built from strings"
             + (" · Unsafe settings = risky Docker / cloud configuration" if show_misconf else "") + ".</div>")
 
 
@@ -173,6 +177,9 @@ def _actions_html(conn, m: dict, hot: pd.DataFrame, cfg) -> str:  # noqa: ANN001
         items.append(("warn" if r.worst <= 1 else "info", f"Upgrade {r.package_name} {r.installed_version} → "
                       f"{r.fixed_version}", f"{r.repository} · fixes {r.advisories} advisor"
                       f"{'y' if r.advisories == 1 else 'ies'}"))
+    if m["category"]["CODE"]:
+        items.append(("info", f"Review {m['category']['CODE']} code issue(s)",
+                      "See the Code issues page: each one names the file, line and the safer way to write it."))
     if m["category"]["MISCONFIGURATION"]:
         items.append(("info", f"Fix {m['category']['MISCONFIGURATION']} misconfiguration(s)",
                       "See the Misconfigurations page for per-file remediation."))
@@ -190,7 +197,7 @@ def _health_html(cfg, conn) -> str:  # noqa: ANN001
     vstate, vlabel = vuln_db_state(f)
     dbh = db_health(cfg, conn)
     rows = []
-    for key, label in (("trivy", "Trivy"), ("gitleaks", "Gitleaks"), ("git", "Git")):
+    for key, label in (("trivy", "Trivy"), ("gitleaks", "Gitleaks"), ("bandit", "Bandit (code)"), ("git", "Git")):
         h = health[key]
         rows.append((label, h["state"], h["label"], h["version"] and f"v{h['version']}"))
     rows.append(("Vulnerability DB", vstate, vlabel, f"updated {ago(f.updated_at)}" if f.present else "not downloaded"))

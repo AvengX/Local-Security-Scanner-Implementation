@@ -44,6 +44,10 @@ gitleaks:
   log_opts: null              # e.g. '--all' to scan every branch
   max_target_megabytes: null  # skip files larger than this
 
+sast:                         # code scan (static analysis) of your own Python code with Bandit
+  enabled: true
+  skip_tests: []              # Bandit check IDs to skip, e.g. [B101] for assert statements
+
 dashboard:
   host: 127.0.0.1             # loopback only; other values are rejected
   port: 8501

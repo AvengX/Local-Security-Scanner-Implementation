@@ -9,10 +9,10 @@ Repository Discovery Engine  (engine/repository_discovery.py)
      ├─ per-repository DB lock (repo_locks table) – no duplicate concurrent scans
      ├─ bounded ThreadPoolExecutor (scan.concurrency, default 1)
      │
-     ├──────────────┬─────────────────┐
-     ▼              ▼                 ▼
-  TrivyScanner   GitleaksScanner   (SBOM / image jobs via Trivy)
-  engine/trivy_scanner.py   engine/gitleaks_scanner.py
+     ├──────────────┬─────────────────┬──────────────────┐
+     ▼              ▼                 ▼                  ▼
+  TrivyScanner   GitleaksScanner   BanditScanner (SAST)  (SBOM / image jobs via Trivy)
+  engine/trivy_scanner.py   engine/gitleaks_scanner.py   engine/sast_scanner.py
      │  subprocess argument lists via engine/runner.py (no shell, timeouts, cancellation)
      ▼
   JSON Report Parser          (engine/report_parser.py)
@@ -38,7 +38,7 @@ Repository Discovery Engine  (engine/repository_discovery.py)
 |---|---|
 | Engine independent of UI | All scanning lives in `engine/` + `run_scan.py`. The dashboard starts scans as detached CLI subprocesses, so closing the browser/Streamlit never kills a scan and scheduled runs need no UI. |
 | Tool-version compatibility | `scanner_health.supported_flags()` parses `trivy <sub> --help` / `gitleaks <mode> --help` once per process and only passes optional flags that the installed version documents. |
-| Exit codes | Trivy is run with `--exit-code 0` → any non-zero exit is an execution error. Gitleaks is run with `--exit-code 2` → 0 = clean, 2 = leaks, anything else = error. Findings always come from the parsed JSON report, never from the exit code alone. |
+| Exit codes | Trivy is run with `--exit-code 0` → any non-zero exit is an execution error. Gitleaks is run with `--exit-code 2` → 0 = clean, 2 = leaks, anything else = error. Bandit: 0 = clean, 1 = issues, anything else = error (the partial report is deleted). Findings always come from the parsed JSON report, never from the exit code alone. |
 | "Never mark failed scans clean" | Statuses `FAILED`, `TIMED_OUT`, `CANCELLED`, `SKIPPED` are persisted with the error. A failed scan resolves nothing; open findings in its scope become `UNVERIFIED`. Orphaned `RUNNING` rows (killed process) become `CANCELLED` on next start. |
 | Coverage | Each successful run stores a coverage key `scanner|scan_type|target|categories|severities`. A finding can only be resolved by a run whose coverage includes its scanner, scan type, target, category **and** severity. |
 | Duplicates | `findings` is unique on `(repository_id, fingerprint)`. Identical entries inside one report are collapsed before insert. Trivy-secret and Gitleaks findings for the same file/line share a `dedup_key`, so overview counts use `COUNT(DISTINCT dedup_key)`. |
@@ -62,3 +62,16 @@ Repository Discovery Engine  (engine/repository_discovery.py)
 | `engine/runner.py` | `Popen` execution, timeouts, Ctrl+C cancellation, stderr excerpts. |
 | `services/audit_report.py` | Detailed per-repository audit report (12 sections, print-ready HTML). Combines the findings database, the raw JSON of the latest successful `trivy fs` run (CVSS, CWE, dates, references, package graph from `--list-all-pkgs`) and read-only git metadata (`-c core.fsmonitor=false`; no `git status`). All text is HTML-escaped, links are http/https only with credentials stripped, and secret values are never available to it. |
 | `services/scheduling_service.py` | `schtasks` command construction, create/delete/query. |
+
+## SAST (Bandit)
+* `engine/sast_scanner.py` runs `python -m bandit -r . -f json` inside the repository with the scanner's own
+  interpreter (Bandit is pinned in requirements.txt and works offline). Bandit parses files into an AST and never
+  imports or runs them.
+* A generated `--ini` file is always passed, so a `.bandit` file in the repository (or in one of its dependencies)
+  cannot change targets, exclusions or skipped checks. `scan.skip_dirs` become `-x` path fragments.
+* Findings use category `CODE` (schema v2 migration rebuilds `findings` to allow it; rows and history are kept).
+  Identity is check ID + file + a hash of the flagged line's text + an occurrence counter, so a finding keeps its
+  history when code above it moves.
+* Code snippets are never stored, and the saved raw report is rewritten without them. B105/B106/B107 messages
+  (which contain the suspected password) are replaced by a fixed text.
+* `assert` (B101) in test files is not reported. `sast.skip_tests` skips checks everywhere.

@@ -44,12 +44,17 @@ weaken Git's ownership checks itself.
 
 ## Raw report sensitivity
 * Gitleaks reports are written with `--redact` (secret values replaced by `REDACTED`).
+* Bandit reports are rewritten after parsing without code snippets, and hardcoded-password messages are
+  replaced by a fixed text; a failed, timed-out or cancelled Bandit run leaves no report behind.
 * Trivy masks secret matches with asterisks in its JSON, but surrounding code lines are included. Treat
   `reports/` as sensitive: keep it on an encrypted disk or restrict its ACL if the machine is shared, e.g.
   `icacls reports /inheritance:r /grant:r "%USERNAME%:(OI)(CI)F"` (manual step; the app does not change ACLs).
 
 ## Known limitations
-* Detection quality is bounded by Trivy/Gitleaks rules and the freshness of Trivy's DB.
+* Detection quality is bounded by Trivy/Gitleaks/Bandit rules and the freshness of Trivy's DB.
+* SAST covers Python only and finds known risky patterns; it cannot find logic flaws (for example missing
+  authorisation checks). Lines marked `# nosec` are not reported. There is no penetration testing of
+  running applications.
 * Windows Smart App Control / WDAC can block unsigned scanner binaries or Python extension DLLs; the app
   detects and reports this but does not bypass it.
 * A user with access to the Windows account can read the database and reports; there is no app-level

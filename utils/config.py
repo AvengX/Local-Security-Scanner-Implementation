@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Literal
 
@@ -41,7 +42,7 @@ class ScanConfig(_Strict):
     db_freshness_hours: int = Field(72, ge=1, le=24 * 90)
     retention_days: int = Field(0, ge=0, le=3650, description="0 keeps history forever")
     skip_dirs: list[str] = Field(default_factory=lambda: list(DEFAULT_SCAN_SKIP_DIRS),
-                                 description="Folder names skipped inside repositories by Trivy and Gitleaks")
+                                 description="Folder names skipped inside repositories by Trivy, Gitleaks and Bandit")
 
     @field_validator("skip_dirs")
     @classmethod
@@ -117,6 +118,23 @@ class GitleaksConfig(_Strict):
         return value or None
 
 
+class SastConfig(_Strict):
+    """Static analysis of the project's own Python code with Bandit (installed with the scanner, runs offline)."""
+
+    enabled: bool = True
+    skip_tests: list[str] = Field(default_factory=list,
+                                  description="Bandit check IDs to skip everywhere, e.g. ['B101'] for assert")
+
+    @field_validator("skip_tests")
+    @classmethod
+    def _tests(cls, value: list[str]) -> list[str]:
+        cleaned = [x.strip().upper() for x in value if x and x.strip()]
+        bad = [x for x in cleaned if not re.fullmatch(r"B\d{3}", x)]
+        if bad:
+            raise ValueError(f"Bandit check IDs look like B101; invalid: {bad}")
+        return list(dict.fromkeys(cleaned))
+
+
 class DashboardConfig(_Strict):
     host: str = "127.0.0.1"
     port: int = Field(8501, ge=1024, le=65535)
@@ -148,6 +166,7 @@ class AppConfig(_Strict):
     scan: ScanConfig = Field(default_factory=ScanConfig)
     trivy: TrivyConfig = Field(default_factory=TrivyConfig)
     gitleaks: GitleaksConfig = Field(default_factory=GitleaksConfig)
+    sast: SastConfig = Field(default_factory=SastConfig)
     dashboard: DashboardConfig = Field(default_factory=DashboardConfig)
     schedule: ScheduleConfig = Field(default_factory=ScheduleConfig)
 

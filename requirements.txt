@@ -7,4 +7,5 @@ numpy==2.4.6
 pyarrow==22.0.0
 pydantic==2.14.3
 PyYAML==6.0.3
+bandit==1.9.4          # SAST: static analysis of Python code (runs offline)
 pytest==9.2.0

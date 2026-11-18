@@ -120,6 +120,18 @@ def check_gitleaks(configured: str | None = None) -> ToolStatus:
     return _version(path, ["version"], r"v?([0-9]+\.[0-9]+\.[0-9]+[^\s]*)", "gitleaks")
 
 
+def check_bandit() -> ToolStatus:
+    """Bandit is a Python package in the scanner's own environment (requirements.txt), run as 'python -m bandit'."""
+    import importlib.util
+    import sys
+
+    if importlib.util.find_spec("bandit") is None:
+        return ToolStatus("bandit", False, error="Bandit is not installed (run scripts\\install.ps1 or "
+                                                 "'pip install -r requirements.txt')")
+    status = _version(sys.executable, ["-m", "bandit", "--version"], r"bandit\s+v?([0-9][^\s]*)", "bandit")
+    return status
+
+
 def check_git() -> ToolStatus:
     path = resolve_executable("git")
     if not path:

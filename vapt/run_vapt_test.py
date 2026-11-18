@@ -31,7 +31,7 @@ import yaml
 PROJECT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT))
 
-from vapt.create_lab import _rmtree, create_lab, upgrade_python_dependency  # noqa: E402
+from vapt.create_lab import _rmtree, create_lab, fix_sql_injection, upgrade_python_dependency  # noqa: E402
 
 REPOS = {"vuln-python-app", "vuln-node-app", "insecure-infra", "clean-app"}
 SUCCESS = ("COMPLETED", "COMPLETED_WITH_FINDINGS")
@@ -122,6 +122,7 @@ class Vapt:
         self.r.add("1 Health", "Trivy installed and allowed to run", trivy_ok,
                    next((ln.strip() for ln in out.splitlines() if ln.strip().startswith("trivy")), ""))
         self.r.add("1 Health", "Gitleaks installed and runnable", "gitleaks  OK" in out)
+        self.r.add("1 Health", "Bandit (SAST) installed and runnable", "bandit    OK" in out)
         db_line = next((ln.strip() for ln in out.splitlines() if "Vulnerability DB" in ln), "")
         self.r.add("1 Health", "Trivy vulnerability DB cached and fresh",
                    "No cached" not in db_line and "STALE" not in db_line, db_line)
@@ -135,7 +136,7 @@ class Vapt:
         self.r.add("2 Discovery", "All 4 lab repositories discovered", names == REPOS, ", ".join(sorted(names)))
 
     def phase_scan(self) -> int:
-        print("\n== Phase 3: full scan (Trivy fs + config + SBOM, Gitleaks git + dir)")
+        print("\n== Phase 3: full scan (Trivy fs + config + SBOM, Gitleaks git + dir, Bandit)")
         code, out = self.cli("scan-all")
         last = self.max_run_id()
         bad = self.q("SELECT r.name, s.scanner, s.scan_type, s.status, s.error_message FROM scan_runs s "
@@ -145,7 +146,7 @@ class Vapt:
                    "; ".join(f"{b['name']} {b['scanner']}:{b['scan_type']}={b['status']} {b['error_message'] or ''}"
                              for b in bad)[:400])
         total = self.q("SELECT COUNT(*) c FROM scan_runs")[0]["c"]
-        self.r.add("3 Scan", "20 scanner runs recorded (4 repos x 5 jobs)", total == 20, f"{total} runs")
+        self.r.add("3 Scan", "24 scanner runs recorded (4 repos x 6 jobs)", total == 24, f"{total} runs")
         meta_ok = self.q("SELECT COUNT(*) c FROM scan_runs WHERE tool_version IS NULL OR "
                          "(scanner='trivy' AND database_updated_at IS NULL)")[0]["c"] == 0
         self.r.add("3 Scan", "Tool version and Trivy DB timestamp recorded on every run", meta_ok)
@@ -202,6 +203,20 @@ class Vapt:
         self.r.add("4 Detection", "Secrets: remediation advises revoke and rotate",
                    all("revoke and rotate" in (r["remediation"] or "") for r in gl_git + gl_dir + tr_sec))
 
+        code = f("vuln-python-app", "category='CODE'")
+        rules = {r["rule_id"] for r in code}
+        for rule, what in (("B608", "SQL built from strings (SQL injection)"), ("B602", "shell=True command"),
+                           ("B301", "pickle.loads on untrusted data"), ("B506", "unsafe yaml.load"),
+                           ("B105", "hardcoded password")):
+            hit = [r for r in code if r["rule_id"] == rule]
+            self.r.add("4 Detection", f"SAST: {what} detected ({rule})", bool(hit),
+                       f"{hit[0]['file_path']}:{hit[0]['line']} {hit[0]['severity']}" if hit else ", ".join(sorted(rules)))
+        self.r.add("4 Detection", "SAST: code issues carry file, line and remediation",
+                   bool(code) and all((r["file_path"] or "").startswith("app/") and r["line"] and r["remediation"]
+                                     for r in code), f"{len(code)} code issues in {len({r['file_path'] for r in code})} files")
+        self.r.add("4 Detection", "SAST: repositories without Python report no code issues",
+                   not f("insecure-infra", "category='CODE'") and not f("vuln-node-app", "category='CODE'"))
+
         clean = f("clean-app")
         clean_runs = self.runs("clean-app")
         self.r.add("4 Detection", "Clean control repo: zero findings (no false positives)", not clean,
@@ -230,6 +245,14 @@ class Vapt:
                    bool(hist) and all(r["status"] == "OPEN" for r in hist))
         others = self.findings("vuln-python-app", "category='VULNERABILITY' AND status='OPEN'")
         self.r.add("5 Remediation", "Unfixed vulnerabilities remain OPEN", bool(others), f"{len(others)} open")
+        fix_sql_injection(self.lab)
+        code2, _ = self.cli("scan-repo", "--name", "vuln-python-app")
+        sqli = self.findings("vuln-python-app", "category='CODE' AND rule_id='B608'")
+        self.r.add("5 Remediation", "Fixed SQL injection (B608) marked RESOLVED after code change",
+                   code2 == 0 and bool(sqli) and all(r["status"] == "RESOLVED" for r in sqli),
+                   ", ".join(r["status"] for r in sqli) or "missing")
+        still = self.findings("vuln-python-app", "category='CODE' AND rule_id='B602' AND status='OPEN'")
+        self.r.add("5 Remediation", "Unfixed code issue (shell=True) stays OPEN with its history", bool(still))
         resolved_count = self.q("SELECT SUM(resolved_count) s FROM scan_runs WHERE id>?", before)[0]["s"] or 0
         self.r.add("5 Remediation", "Scan run records resolved count", resolved_count >= 1, str(resolved_count))
 
@@ -254,8 +277,9 @@ class Vapt:
         code, out = self.cli("status")
         self.r.add("7 Reports", "status command summarises posture", code == 0 and "Repositories: 4" in out)
         raw = list((self.app / "reports").rglob("*_run*.json"))
-        self.r.add("7 Reports", "Raw Trivy and Gitleaks JSON reports kept locally",
-                   any("_trivy_" in p.name for p in raw) and any("_gitleaks_" in p.name for p in raw),
+        self.r.add("7 Reports", "Raw Trivy, Gitleaks and Bandit JSON reports kept locally",
+                   any("_trivy_" in p.name for p in raw) and any("_gitleaks_" in p.name for p in raw)
+                   and any("_bandit_" in p.name for p in raw),
                    f"{len(raw)} raw reports")
 
     def phase_leak_audit(self, secrets: dict[str, str]) -> None:

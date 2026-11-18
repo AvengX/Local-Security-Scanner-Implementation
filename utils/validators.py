@@ -7,7 +7,7 @@ import re
 from pathlib import Path
 
 SEVERITIES: tuple[str, ...] = ("CRITICAL", "HIGH", "MEDIUM", "LOW", "UNKNOWN")
-CATEGORIES: tuple[str, ...] = ("VULNERABILITY", "SECRET", "MISCONFIGURATION", "LICENSE", "OTHER")
+CATEGORIES: tuple[str, ...] = ("VULNERABILITY", "SECRET", "MISCONFIGURATION", "CODE", "LICENSE", "OTHER")
 TRIVY_SCANNERS: dict[str, str] = {
     "vuln": "VULNERABILITY",
     "misconfig": "MISCONFIGURATION",

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import sqlite3
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
@@ -13,11 +14,33 @@ from utils.paths import SCHEMA_PATH
 
 log = get_logger(__name__)
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
+
+
+def _allow_code_category(conn: sqlite3.Connection) -> None:
+    """v2: allow category 'CODE' (SAST findings from Bandit). SQLite cannot alter a CHECK constraint, so the
+    findings table is rebuilt (official 12-step procedure; foreign keys are switched off around it by init_db)."""
+    row = conn.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='findings'").fetchone()
+    if row is None or "'CODE'" in row[0]:
+        return
+    new_sql = re.sub(r"CREATE TABLE\s+(IF NOT EXISTS\s+)?\"?findings\"?", "CREATE TABLE findings_new", row[0],
+                     count=1)
+    new_sql = new_sql.replace("'MISCONFIGURATION','LICENSE'", "'MISCONFIGURATION','CODE','LICENSE'")
+    if "'CODE'" not in new_sql:
+        raise RuntimeError("Could not update the findings category constraint")
+    cols = ", ".join(r[1] for r in conn.execute("PRAGMA table_info(findings)"))
+    conn.execute(new_sql)
+    conn.execute(f"INSERT INTO findings_new ({cols}) SELECT {cols} FROM findings")
+    conn.execute("DROP TABLE findings")
+    conn.execute("ALTER TABLE findings_new RENAME TO findings")
+    bad = conn.execute("PRAGMA foreign_key_check").fetchall()
+    if bad:
+        raise RuntimeError(f"Foreign key check failed after migration: {len(bad)} row(s)")
+
 
 # Ordered migrations: (target_version, callable). Each runs inside a transaction.
 # Future schema changes append here; never edit a released migration.
-MIGRATIONS: list[tuple[int, Callable[[sqlite3.Connection], None]]] = []
+MIGRATIONS: list[tuple[int, Callable[[sqlite3.Connection], None]]] = [(2, _allow_code_category)]
 
 
 def utcnow() -> str:
@@ -72,13 +95,19 @@ def init_db(db_path: Path) -> sqlite3.Connection:
         set_setting(conn, "schema_version", str(SCHEMA_VERSION))
         set_setting(conn, "created_at", utcnow())
         current = SCHEMA_VERSION
-    for version, migrate in MIGRATIONS:
-        if version > current:
-            log.info("Applying database migration", extra={"version": version})
-            with transaction(conn):
-                migrate(conn)
-                set_setting(conn, "schema_version", str(version))
-            current = version
+    pending = [(v, m) for v, m in MIGRATIONS if v > current]
+    if pending:
+        conn.execute("PRAGMA foreign_keys = OFF")  # table rebuilds must not cascade; checked inside each migration
+        try:
+            for version, migrate in pending:
+                log.info("Applying database migration", extra={"version": version})
+                with transaction(conn):
+                    migrate(conn)
+                    set_setting(conn, "schema_version", str(version))
+                current = version
+        finally:
+            conn.execute("PRAGMA foreign_keys = ON")
+        conn.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))  # re-create indexes dropped by a rebuild
     if current > SCHEMA_VERSION and not MIGRATIONS:
         log.warning("Database schema is newer than this application", extra={"db_version": current})
     return conn

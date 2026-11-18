@@ -76,7 +76,7 @@ def _audit_report(conn, cfg, repo) -> None:  # noqa: ANN001
         return
     st.caption("Repository and scan metadata, executive summary, deduplicated counts, severity distribution, every "
                "vulnerability with CVSS / CWE / fixed versions / dependency path, direct vs transitive, remediation, "
-               "secrets (never their values), misconfigurations, references and methodology.")
+               "secrets (never their values), misconfigurations, code issues (SAST), references and methodology.")
     c1, c2 = st.columns([1, 3], vertical_alignment="center")
     if c1.button("Generate audit report", icon=":material/assignment:", type="primary", width="stretch",
                  key="audit_generate"):
@@ -90,7 +90,7 @@ def _audit_report(conn, cfg, repo) -> None:  # noqa: ANN001
         st.session_state["audit_last"] = {"repo_id": repo["id"], "path": str(path), "name": name,
                                           "status": audit.scan_status(data), "active": len(data["active"]),
                                           "vulns": len(data["vulns"]), "secrets": len(data["secrets"]),
-                                          "misconfs": len(data["misconfs"])}
+                                          "misconfs": len(data["misconfs"]), "code": len(data.get("code", []))}
     last = st.session_state.get("audit_last")
     if not last or last["repo_id"] != repo["id"]:
         c2.caption("Generates an HTML file in reports/exports. Open it and choose Print → Save as PDF for a PDF copy.")
@@ -105,6 +105,7 @@ def _audit_report(conn, cfg, repo) -> None:  # noqa: ANN001
                 f"{t.chip(f'Scan status: {status}', 'ok' if status == 'COMPLETED' else 'warn', 'shield_check')}"
                 f"{t.chip(f'{last['vulns']} vulnerabilities', 'neutral', 'package')}"
                 f"{t.chip(f'{last['secrets']} secrets', 'neutral', 'key')}"
+                f"{t.chip(f'{last.get('code', 0)} code issues', 'neutral', 'code')}"
                 f"{t.chip(f'{last['misconfs']} misconfigurations', 'neutral', 'sliders')}</div>",
                 unsafe_allow_html=True)
     d1, d2 = st.columns([1, 3], vertical_alignment="center")
@@ -136,7 +137,7 @@ def _saved_exports(cfg) -> None:  # noqa: ANN001
 
 def _raw_reports(conn, cfg, repo_id) -> None:  # noqa: ANN001
     section("Raw scanner reports", "only reports registered in the database and inside the reports folder")
-    tool = st.segmented_control("Scanner", ["trivy", "gitleaks"], default="trivy", key="raw_tool",
+    tool = st.segmented_control("Scanner", ["trivy", "gitleaks", "bandit"], default="trivy", key="raw_tool",
                                 format_func=str.title) or "trivy"
     entries = list_reports(conn, cfg.reports_dir, scanner=tool, repository_id=repo_id)
     if not entries:

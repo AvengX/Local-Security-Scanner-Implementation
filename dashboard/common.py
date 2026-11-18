@@ -16,7 +16,8 @@ import streamlit as st
 
 from dashboard import theme as t
 from database.db import init_db
-from engine.scanner_health import (CREATE_NO_WINDOW, DbFreshness, check_git, check_gitleaks, check_trivy,
+from engine.scanner_health import (CREATE_NO_WINDOW, DbFreshness, check_bandit, check_git, check_gitleaks,
+                                   check_trivy,
                                    default_trivy_cache_dir, trivy_db_freshness)
 from utils.config import AppConfig, load_config
 from utils.paths import PROJECT_ROOT
@@ -78,7 +79,7 @@ def _classify(status: Any) -> dict[str, Any]:
 def tool_health(trivy_exe: str | None, gitleaks_exe: str | None) -> dict[str, dict[str, Any]]:
     """Run the version checks at most once a minute (each check starts a process)."""
     return {s["name"]: s for s in (_classify(check_trivy(trivy_exe)), _classify(check_gitleaks(gitleaks_exe)),
-                                   _classify(check_git()))}
+                                   _classify(check_bandit()), _classify(check_git()))}
 
 
 def db_health(cfg: AppConfig, conn: sqlite3.Connection) -> dict[str, Any]:
@@ -267,7 +268,7 @@ def page_header(title: str, subtitle: str, search: bool = False) -> None:
                         "ON r.id=s.repository_id AND r.active=1 WHERE s.status IN "
                         "('COMPLETED','COMPLETED_WITH_FINDINGS')").fetchone()[0]
     health = tool_health(cfg.trivy.executable, cfg.gitleaks.executable)
-    scanners = [h for n, h in health.items() if n in ("trivy", "gitleaks")]
+    scanners = [h for n, h in health.items() if n in ("trivy", "gitleaks") or (n == "bandit" and cfg.sast.enabled)]
     bad = [h["name"].title() for h in scanners if h["state"] != "ok"]
     vstate, vlabel = vuln_db_state(get_freshness(cfg))
     jobs = running_jobs(conn)
@@ -349,6 +350,7 @@ def render_sidebar(cfg: AppConfig, conn: sqlite3.Connection) -> None:
     dbh = db_health(cfg, conn)
     rows = [("Trivy", health["trivy"]["state"], health["trivy"]["label"]),
             ("Gitleaks", health["gitleaks"]["state"], health["gitleaks"]["label"]),
+            *([("Bandit (code)", health["bandit"]["state"], health["bandit"]["label"])] if cfg.sast.enabled else []),
             ("Vuln DB", vstate, vlabel),
             ("Database", dbh["state"], dbh["label"])]
     body = "".join(f"<div class='lss-health-row' style='--c:{t.TONES[s]}'><span>{t.esc(n)}</span>"

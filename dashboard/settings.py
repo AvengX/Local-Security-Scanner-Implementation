@@ -166,6 +166,12 @@ def _config_tab(cfg: AppConfig) -> None:
                                       help="git = commit history · dir = current working tree")
             gl_cfg = st.text_input("Gitleaks config file (allowlists)", cfg.gitleaks.config_path or "")
             gl_log = st.text_input("Gitleaks git log options", cfg.gitleaks.log_opts or "", placeholder="--all")
+        c1, c2 = st.columns(2)
+        sast_on = c1.checkbox("Enable code scan (SAST, Bandit)", cfg.sast.enabled,
+                              help="Checks your own Python code for risky patterns such as SQL built from strings, "
+                                   "shell=True or pickle. Reads the code only; never runs it.")
+        sast_skip = c2.text_input("Bandit checks to skip (comma-separated)", ", ".join(cfg.sast.skip_tests),
+                                  placeholder="B101", help="For example B101 (assert statements)")
 
         section("5 · Reports and storage", "relative paths are resolved from the project folder")
         p1, p2, p3 = st.columns(3)
@@ -190,6 +196,7 @@ def _config_tab(cfg: AppConfig) -> None:
         data["trivy"].update(enabled=trivy_on, scan_types=trivy_types, scanners=trivy_scanners, generate_sbom=sbom)
         data["gitleaks"].update(enabled=gl_on, modes=gl_modes, config_path=gl_cfg.strip() or None,
                                 log_opts=gl_log.strip() or None)
+        data["sast"] = dict(enabled=sast_on, skip_tests=[x.strip() for x in sast_skip.split(",") if x.strip()])
         data["paths"].update(data_dir=data_dir.strip(), reports_dir=reports_dir.strip(), logs_dir=logs_dir.strip())
         try:
             new_cfg = AppConfig.model_validate(data)

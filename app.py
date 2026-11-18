@@ -19,8 +19,8 @@ from pydantic import ValidationError  # noqa: E402
 st.set_page_config(page_title="Local Security Scanner", page_icon=str(ROOT / "dashboard" / "assets" / "emblem.svg"),
                    layout="wide", initial_sidebar_state="auto")
 
-from dashboard import (findings, history, misconfigurations, overview, reports, repositories, secrets,  # noqa: E402
-                       settings, vapt, vulnerabilities)
+from dashboard import (code_issues, findings, history, misconfigurations, overview, reports,  # noqa: E402
+                       repositories, secrets, settings, vapt, vulnerabilities)
 from dashboard.common import (PAGES, get_config, get_conn, inject_css, misconfig_relevant, notice,  # noqa: E402
                               render_sidebar, sync_roots)
 from utils.logger import setup_logging  # noqa: E402
@@ -50,6 +50,7 @@ def main() -> None:
         "vulnerabilities": page(vulnerabilities.render, "Vulnerabilities", ":material/deployed_code:",
                                 "vulnerabilities"),
         "secrets": page(secrets.render, "Secrets", ":material/key:", "secrets"),
+        "code": page(code_issues.render, "Code issues", ":material/code:", "code-issues"),
         "misconfigurations": page(misconfigurations.render, "Misconfigurations", ":material/tune:",
                                   "misconfigurations"),
         "repositories": page(repositories.render, "Repositories", ":material/folder_code:", "repositories"),
@@ -64,7 +65,7 @@ def main() -> None:
     if not misconfig_relevant(cfg, conn):
         pages.pop("misconfigurations")
     PAGES.update(pages)
-    monitor = [pages[k] for k in ("overview", "findings", "vulnerabilities", "secrets", "misconfigurations")
+    monitor = [pages[k] for k in ("overview", "findings", "vulnerabilities", "secrets", "code", "misconfigurations")
                if k in pages]
     nav = st.navigation({
         "Monitor": monitor,

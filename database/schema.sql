@@ -1,4 +1,4 @@
--- Local Security Scanner schema (version 1). Applied idempotently.
+-- Local Security Scanner schema (version 2). Applied idempotently.
 PRAGMA foreign_keys = ON;
 
 CREATE TABLE IF NOT EXISTS repositories (
@@ -21,7 +21,7 @@ CREATE TABLE IF NOT EXISTS scan_runs (
     id                  INTEGER PRIMARY KEY AUTOINCREMENT,
     repository_id       INTEGER NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
     batch_id            TEXT,
-    scanner             TEXT    NOT NULL,                -- trivy | gitleaks
+    scanner             TEXT    NOT NULL,                -- trivy | gitleaks | bandit
     scan_type           TEXT    NOT NULL,                -- fs | config | image | sbom | git | dir
     scan_target         TEXT    NOT NULL DEFAULT '.',
     coverage            TEXT,                            -- comparable coverage key
@@ -55,7 +55,7 @@ CREATE TABLE IF NOT EXISTS findings (
     scanner           TEXT    NOT NULL,
     scan_type         TEXT    NOT NULL,
     scan_target       TEXT    NOT NULL DEFAULT '.',
-    category          TEXT    NOT NULL CHECK (category IN ('VULNERABILITY','SECRET','MISCONFIGURATION','LICENSE','OTHER')),
+    category          TEXT    NOT NULL CHECK (category IN ('VULNERABILITY','SECRET','MISCONFIGURATION','CODE','LICENSE','OTHER')),
     severity          TEXT    NOT NULL CHECK (severity IN ('CRITICAL','HIGH','MEDIUM','LOW','UNKNOWN')),
     vulnerability_id  TEXT,
     rule_id           TEXT,
