@@ -299,6 +299,33 @@ def page_header(title: str, subtitle: str, search: bool = False) -> None:
                 st.switch_page(PAGES["findings"])
 
 
+@st.cache_data(ttl=60, show_spinner=False)
+def coverage(repos: tuple[tuple[str, str], ...], skip: tuple[str, ...]) -> list:
+    """What each monitored repository contains that the scanners can check (read-only file listing)."""
+    from services.coverage_service import inspect_repository
+
+    return [inspect_repository(name, path, list(skip)) for name, path in repos]
+
+
+def repo_coverage(cfg: AppConfig, conn: sqlite3.Connection) -> list:
+    repos = tuple((r["name"], r["path"]) for r in conn.execute(
+        "SELECT name, path FROM repositories WHERE active=1 ORDER BY name COLLATE NOCASE").fetchall())
+    return coverage(repos, tuple(sorted({*cfg.scan.skip_dirs, *cfg.excluded_dirs})))
+
+
+def misconfig_relevant(cfg: AppConfig, conn: sqlite3.Connection) -> bool:
+    """Show the Misconfigurations page / column only when there is something for it: an open or unverified
+    misconfiguration, or a Dockerfile / Compose / Kubernetes / Helm / Terraform file in a monitored project.
+    Scans still check for misconfigurations either way; the page reappears as soon as such a file exists."""
+    try:
+        if conn.execute("SELECT 1 FROM findings f JOIN repositories r ON r.id=f.repository_id AND r.active=1 "
+                        "WHERE f.category='MISCONFIGURATION' AND f.status IN ('OPEN','UNVERIFIED') LIMIT 1").fetchone():
+            return True
+        return any(c.config_files for c in repo_coverage(cfg, conn))
+    except Exception:  # noqa: BLE001 — when unsure, keep the page visible
+        return True
+
+
 def sync_roots(cfg: AppConfig, conn: sqlite3.Connection) -> None:
     """Re-discover repositories when config.yaml's roots changed outside the dashboard (e.g. edited in VS Code)."""
     from engine.scan_orchestrator import ScanOrchestrator, roots_changed

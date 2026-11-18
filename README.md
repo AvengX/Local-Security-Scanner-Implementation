@@ -21,6 +21,25 @@ Your project folders ──► Trivy + Gitleaks ──► SQLite database ──
 Nothing is uploaded. Only Trivy downloads its vulnerability list from the internet, and offline mode turns that off.
 The scanner never changes your projects.
 
+## Tech stack
+| Layer | Technology | Used for |
+|---|---|---|
+| Language | **Python 3.14** (3.12+ supported) | All application code: discovery, scanning, parsing, reports, dashboard |
+| Vulnerability scanner | **Trivy** 0.76 (Aqua Security) | Vulnerable libraries, unsafe Docker/Kubernetes/Terraform settings, secrets in files |
+| Secret scanner | **Gitleaks** 8.30 | Passwords and keys in current files and in Git history |
+| Version control | **Git** | Finding repositories, branch/commit details, history scans |
+| Database | **SQLite** (Python `sqlite3`) | Repositories, scan runs, findings and history, stored locally in `data\` |
+| Dashboard | **Streamlit** 1.67 | Web UI on `127.0.0.1:8501` (tables, filters, buttons that start background scans) |
+| Data handling | **pandas** 2.3, **NumPy** 2.4, **PyArrow** 22 | Tables and filtering in the dashboard |
+| Validation and config | **Pydantic** 2.14, **PyYAML** 6.0 | Checking `config\config.yaml` and settings |
+| Reports | HTML + CSS (print-ready), CSV, JSON, Markdown | Audit report (Print → Save as PDF), exports |
+| Testing | **pytest** 9.2, Streamlit AppTest | Unit and dashboard tests; VAPT acceptance test (`vapt\run_vapt_test.py`) |
+| Automation | **PowerShell** scripts, Windows Task Scheduler | Install, start, scheduled scans (`scripts\`) |
+| Platform | Windows 10/11 (Win32 API via `ctypes`) | Process checks for running scans and tests |
+
+Exact package versions are pinned in [requirements.txt](requirements.txt). No cloud services, external database
+or JavaScript build tools are used.
+
 ## Install on any Windows 10/11 laptop
 Each laptop has its own independent copy with its own settings, database and results. Nothing is shared between PCs.
 
@@ -102,7 +121,7 @@ Every page answers one question. Full guide: [docs/UI_GUIDE.md](docs/UI_GUIDE.md
 | Security Findings | What exactly is wrong, everywhere? |
 | Vulnerabilities | Which libraries I use have known security holes? |
 | Secrets | Where did passwords or API keys end up in my code? |
-| Misconfigurations | Which Docker or cloud settings are unsafe? |
+| Misconfigurations | Which Docker or cloud settings are unsafe? (shown only when a project has such files) |
 | Repositories | Which projects are watched, and how do I scan them? |
 | Scan History | What happened every time a scan ran? |
 | Reports | How do I download or share the results? |
@@ -119,9 +138,11 @@ Every page answers one question. Full guide: [docs/UI_GUIDE.md](docs/UI_GUIDE.md
 * **Search box:** type a CVE, package or file name to jump to matching findings.
 * **Security posture:** one headline based on the worst open problem.
   *Critical exposure* (red) → *Elevated risk* (orange) → *Guarded* → *No open findings* (green).
-* **Seven cards:** repositories, scanned, critical, high, exposed secrets, misconfigurations, failed scans.
+* **Cards:** repositories, scanned, critical, high, exposed secrets, misconfigurations, failed scans.
 * **Problems by project:** a plain table — vulnerable libraries, leaked secrets and unsafe settings per project,
   with the most serious level. (No charts: every number is shown as text.)
+* The misconfigurations card and the unsafe-settings column are hidden while no project has anything for them
+  to check (see below).
 * **Recommended actions:** a to-do list built from your results, for example "Upgrade happy-dom 20.14.6 → 21.0.4" or
   "Rotate credentials found in these files".
 * **Latest scan activity** and **Scanner health** panels.
@@ -142,7 +163,9 @@ and similar), with the **installed** version and the **version that fixes it**.
 * Fix: rotate the key at the provider (new key, cancel the old one), then remove it from the code.
 
 **Misconfigurations**: unsafe settings in Dockerfiles, Kubernetes or Terraform, for example "container runs as root".
-Click a row for the fix.
+Click a row for the fix. The page only appears in the sidebar when a monitored project contains a Dockerfile,
+docker-compose, Kubernetes, Helm or Terraform file, or has an open misconfiguration. Scans keep checking for
+misconfigurations either way, so the page comes back by itself as soon as such a file is added.
 
 **Repositories**: your projects, and where scans start.
 * **Discover repositories:** finds Git projects in your folders.
@@ -159,8 +182,7 @@ Click a row for the fix.
 **Vulnerabilities / Misconfigurations when empty**: the page says *why*. It lists each dependency file and how
 many libraries Trivy could actually check — libraries without an exact version (e.g. `numpy` instead of
 `numpy==1.26.4`) or files Trivy doesn't read (e.g. `requirements-train.txt`) are not checked, and the page says so
-instead of claiming a clean result. Misconfigurations explains when a project has no Dockerfile, docker-compose,
-Kubernetes, Helm or Terraform files to check.
+instead of claiming a clean result. Misconfigurations lists the configuration files it checked.
 
 **Reports**: downloads.
 * Choose *all projects* or *one project*, then download **CSV**, **JSON**, **Markdown** or **HTML**.

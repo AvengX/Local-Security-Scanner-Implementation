@@ -11,7 +11,8 @@ import pandas as pd
 import streamlit as st
 
 from dashboard import theme as t
-from dashboard.common import ROW_SELECT, selected_row, fmt_ts, get_config, get_conn, html, notice, page_header, section
+from dashboard.common import (ROW_SELECT, fmt_ts, get_config, get_conn, html, notice, page_header, repo_coverage,
+                              section, selected_row)
 from dashboard.states import no_repositories
 from services import analytics_service as an
 from services.export_service import findings_csv_bytes
@@ -41,18 +42,9 @@ def _sev_text(s: str) -> str:
     return f"{t.SEVERITY_GLYPH.get(s, '○')} {s.title()}"
 
 
-@st.cache_data(ttl=60, show_spinner=False)
-def _coverage(repos: tuple[tuple[str, str], ...], skip: tuple[str, ...]) -> list:
-    from services.coverage_service import inspect_repository
-
-    return [inspect_repository(name, path, list(skip)) for name, path in repos]
-
-
 def _what_was_checked(cfg, conn, kind: str, empty: bool) -> None:  # noqa: ANN001
     """Explain an empty page: which files Trivy could read in each project, and why nothing was found."""
-    repos = tuple((r["name"], r["path"]) for r in conn.execute(
-        "SELECT name, path FROM repositories WHERE active=1 ORDER BY name COLLATE NOCASE").fetchall())
-    covs = _coverage(repos, tuple(sorted({*cfg.scan.skip_dirs, *cfg.excluded_dirs})))
+    covs = repo_coverage(cfg, conn)
     if kind == "vuln":
         files = [(c.repository, d) for c in covs for d in c.dependency_files]
         pinned = sum(d.pinned or 0 for _, d in files if d.checkable)

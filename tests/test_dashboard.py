@@ -447,3 +447,41 @@ def test_findings_repository_filter_lists_clean_repositories(env) -> None:
     box.select("CleanOne").run()
     text = " ".join(m.value for m in at.markdown)
     assert "No findings in CleanOne" in text
+
+
+def test_misconfigurations_hidden_until_there_is_something_to_check(env) -> None:
+    from dashboard.common import coverage, misconfig_relevant
+
+    conn = init_db(env.db_path)
+    repo_dir = Path(env.repository_roots[0]) / "PlainApp"
+    repo_dir.mkdir(exist_ok=True)
+    (repo_dir / "app.py").write_text("print('hi')\n", encoding="utf-8")
+    dao.sync_discovered(conn, [DiscoveredRepo("PlainApp", str(repo_dir), env.repository_roots[0])],
+                        env.repository_roots)
+    coverage.clear()
+    assert not misconfig_relevant(env, conn)
+    conn.close()
+    at = page_app("overview").run()
+    assert not at.exception
+    text = " ".join(m.value for m in at.markdown)
+    assert "Problems by project" in text and "Unsafe settings" not in text and "Misconfigs" not in text
+    at = AppTest.from_file(APP, default_timeout=60).run()
+    assert not at.exception
+
+    (repo_dir / "Dockerfile").write_text("FROM python:3.12\n", encoding="utf-8")
+    coverage.clear()
+    conn = init_db(env.db_path)
+    assert misconfig_relevant(env, conn)
+    conn.close()
+
+
+def test_misconfigurations_shown_when_findings_exist(env) -> None:
+    from dashboard.common import coverage, misconfig_relevant
+
+    populate(env)  # the Trivy fixture contains one misconfiguration
+    coverage.clear()
+    conn = init_db(env.db_path)
+    assert misconfig_relevant(env, conn)
+    conn.close()
+    text = " ".join(m.value for m in page_app("overview").run().markdown)
+    assert "Unsafe settings" in text

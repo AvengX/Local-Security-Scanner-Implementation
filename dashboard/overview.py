@@ -8,8 +8,8 @@ import pandas as pd
 import streamlit as st
 
 from dashboard import theme as t
-from dashboard.common import (PAGES, ago, get_config, get_conn, get_freshness, html, page_header, section,
-                              tool_health, vuln_db_state, db_health)
+from dashboard.common import (PAGES, ago, db_health, get_config, get_conn, get_freshness, html, misconfig_relevant,
+                              page_header, section, tool_health, vuln_db_state)
 from dashboard.states import no_repositories, system_alerts
 from services import analytics_service as an
 from utils.validators import SEVERITIES
@@ -46,6 +46,7 @@ def render() -> None:
         return
 
     sev, cat = m["severity"], m["category"]
+    show_misconf = misconfig_relevant(cfg, conn)
     week = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
     new7, res7 = (conn.execute("SELECT COUNT(*) FROM finding_changes c JOIN scan_runs s ON s.id=c.scan_run_id "
                                "JOIN repositories r ON r.id=s.repository_id AND r.active=1 "
@@ -75,9 +76,9 @@ def render() -> None:
         t.metric_card("Critical", sev["CRITICAL"], "open + unverified", t.SEVERITY_COLORS["CRITICAL"], "flame"),
         t.metric_card("High", sev["HIGH"], "open + unverified", t.SEVERITY_COLORS["HIGH"], "alert"),
         t.metric_card("Exposed secrets", cat["SECRET"], "values never stored", t.CATEGORY_COLORS["SECRET"], "key"),
-        t.metric_card("Misconfigs", cat["MISCONFIGURATION"], "IaC / Dockerfile settings",
-                      t.CATEGORY_COLORS["MISCONFIGURATION"], "sliders",
-                      aria=f"Misconfigurations: {cat['MISCONFIGURATION']}"),
+        *([t.metric_card("Misconfigs", cat["MISCONFIGURATION"], "IaC / Dockerfile settings",
+                         t.CATEGORY_COLORS["MISCONFIGURATION"], "sliders",
+                         aria=f"Misconfigurations: {cat['MISCONFIGURATION']}")] if show_misconf else []),
         t.metric_card("Failed scans", m["failed_scans_latest"], f"latest per scanner · {m['failed_scans_total']} total",
                       "err" if m["failed_scans_latest"] else "ok", "x_circle" if m["failed_scans_latest"] else
                       "check_circle"),
@@ -88,7 +89,7 @@ def render() -> None:
 
     with st.container(key="panel_by_project"):
         section("Problems by project", "open + unverified · each problem counted once")
-        html(_by_project_html(conn))
+        html(_by_project_html(conn, show_misconf))
 
     with st.container(key="wrap_bottom"):
         b1, b2, b3 = st.columns([1.25, 1.25, 1])
@@ -116,7 +117,7 @@ def render() -> None:
             html(_health_html(cfg, conn))
 
 
-def _by_project_html(conn) -> str:  # noqa: ANN001
+def _by_project_html(conn, show_misconf: bool = True) -> str:  # noqa: ANN001
     """Plain table instead of charts: what kind of problem, how many, and the most serious one, per project."""
     repos = an.repository_table(conn)
     fdf = an.findings_frame(conn)
@@ -137,16 +138,17 @@ def _by_project_html(conn) -> str:  # noqa: ANN001
             return f"<td style='text-align:right'>{shown}</td>"
 
         rows.append(f"<tr><td><b>{t.esc(r.name)}</b></td>{cell(cnt.get('VULNERABILITY', 0))}{cell(cnt.get('SECRET', 0))}"
-                    f"{cell(cnt.get('MISCONFIGURATION', 0))}<td>{worst}</td>"
+                    f"{cell(cnt.get('MISCONFIGURATION', 0)) if show_misconf else ''}<td>{worst}</td>"
                     f"<td style='text-align:right'><b>{len(f)}</b></td></tr>")
     head = ("<th>Project</th><th style='text-align:right'>Vulnerable libraries</th>"
-            "<th style='text-align:right'>Leaked secrets</th><th style='text-align:right'>Unsafe settings</th>"
+            "<th style='text-align:right'>Leaked secrets</th>"
+            + ("<th style='text-align:right'>Unsafe settings</th>" if show_misconf else "") +
             "<th>Most serious</th><th style='text-align:right'>Total</th>")
     return (f"<div class='lss-table-wrap'><table class='lss-table'><thead><tr>{head}</tr></thead>"
             f"<tbody>{''.join(rows)}</tbody></table></div>"
             "<div style='color:#94A3B8;font-size:.85rem;margin-top:.45rem'>Vulnerable libraries = third-party packages "
-            "with known security flaws · Leaked secrets = passwords, keys or tokens written in files · Unsafe settings "
-            "= risky Docker / cloud configuration.</div>")
+            "with known security flaws · Leaked secrets = passwords, keys or tokens written in files"
+            + (" · Unsafe settings = risky Docker / cloud configuration" if show_misconf else "") + ".</div>")
 
 
 def _actions_html(conn, m: dict, hot: pd.DataFrame, cfg) -> str:  # noqa: ANN001

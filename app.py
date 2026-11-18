@@ -21,7 +21,8 @@ st.set_page_config(page_title="Local Security Scanner", page_icon=str(ROOT / "da
 
 from dashboard import (findings, history, misconfigurations, overview, reports, repositories, secrets,  # noqa: E402
                        settings, vapt, vulnerabilities)
-from dashboard.common import PAGES, get_config, get_conn, inject_css, notice, render_sidebar, sync_roots  # noqa: E402
+from dashboard.common import (PAGES, get_config, get_conn, inject_css, misconfig_relevant, notice,  # noqa: E402
+                              render_sidebar, sync_roots)
 from utils.logger import setup_logging  # noqa: E402
 
 ASSETS = ROOT / "dashboard" / "assets"
@@ -57,15 +58,19 @@ def main() -> None:
         "vapt": page(vapt.render, "VAPT Lab", ":material/science:", "vapt-lab"),
         "settings": page(settings.render, "Settings", ":material/settings:", "settings"),
     }
+    conn = get_conn(cfg)
+    sync_roots(cfg, conn)
+    # Hidden while no project has a Dockerfile / Compose / Kubernetes / Helm / Terraform file (nothing to check).
+    if not misconfig_relevant(cfg, conn):
+        pages.pop("misconfigurations")
     PAGES.update(pages)
+    monitor = [pages[k] for k in ("overview", "findings", "vulnerabilities", "secrets", "misconfigurations")
+               if k in pages]
     nav = st.navigation({
-        "Monitor": [pages["overview"], pages["findings"], pages["vulnerabilities"], pages["secrets"],
-                    pages["misconfigurations"]],
+        "Monitor": monitor,
         "Operate": [pages["repositories"], pages["history"], pages["reports"], pages["vapt"]],
         "System": [pages["settings"]],
     })
-    conn = get_conn(cfg)
-    sync_roots(cfg, conn)
     with st.sidebar:
         render_sidebar(cfg, conn)
     nav.run()
