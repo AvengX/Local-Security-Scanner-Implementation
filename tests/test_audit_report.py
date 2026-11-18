@@ -127,7 +127,7 @@ def test_audit_report_content(tmp_path: Path, cfg) -> None:  # noqa: ANN001
 
     doc = audit.render_audit_html(data)
     for section in ("1. Repository details", "2. Executive summary", "5. Detailed vulnerability findings",
-                    "7. Direct versus transitive", "9. Secrets", "11. Code issues", "13. Methodology"):
+                    "7. Direct versus transitive", "9. Secrets", "11. Code issues", "12. Web app issues", "14. Methodology"):
         assert section in doc
     assert "package-lock.json &gt; axios@1.9.0 &gt; form-data@4.0.2" in doc
     assert "npm install vite@6.4.4" in doc and "overrides" in doc       # transitive -> override advice

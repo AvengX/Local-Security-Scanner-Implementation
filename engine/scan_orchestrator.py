@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
+import json
 import os
 import re
 import sqlite3
@@ -16,6 +17,7 @@ from typing import Any
 from database import repositories as dao
 from database.db import connect, get_setting, init_db, set_setting, utcnow
 from engine.comparison_engine import apply_scan_results, mark_unverified_after_failure
+from engine.dast_scanner import DastScanner
 from engine.gitleaks_scanner import GitleaksScanner
 from engine.locks import JobLock, JobLockError
 from engine.repository_discovery import DiscoveryResult, discover_repositories
@@ -171,6 +173,8 @@ class ScanOrchestrator:
             jobs += [Job("gitleaks", m) for m in self.cfg.gitleaks.modes]
         if self.cfg.sast.enabled:
             jobs.append(Job("bandit", "python"))
+        if self.cfg.dast.enabled:
+            jobs += [Job("dast", "web", url) for url in self.cfg.dast.targets_for(repo["name"])]
         return jobs
 
     def _report_path(self, repo: dict[str, Any], job: Job, run_id: int) -> Path:
@@ -181,7 +185,8 @@ class ScanOrchestrator:
         tgt = "" if job.target == "." else "_" + _safe_name(job.target)
         return folder / f"{stamp}_{job.scanner}_{job.scan_type}{tgt}_run{run_id}.{ext}"
 
-    def _run_job(self, job: Job, repo_path: Path, report: Path, offline: bool) -> ScanExecution:
+    def _run_job(self, job: Job, repo_path: Path, report: Path, offline: bool,
+                 repo_id: int | None = None) -> ScanExecution:
         cfg = self.cfg
         if job.scanner == "trivy":
             opts = TrivyOptions.from_config(cfg, offline=offline)
@@ -212,7 +217,33 @@ class ScanOrchestrator:
         if job.scanner == "bandit":
             excludes = exclude_patterns(cfg.scan.skip_dirs, self._app_dirs_inside(repo_path))
             return self.bandit.scan(repo_path, report, cfg.scan.timeout_seconds, excludes, cfg.sast.skip_tests)
+        if job.scanner == "dast":
+            d = cfg.dast
+            return DastScanner(d.request_timeout, d.max_pages, d.max_requests).scan(
+                job.target, report, cfg.scan.timeout_seconds, self._dast_seeds(repo_id, job.target))
         raise ValueError(f"Unknown job {job}")
+
+    def _dast_seeds(self, repo_id: int | None, target: str) -> list[tuple[str, list[str]]]:
+        """Pages of earlier, still-open web findings. They are always re-tested first, so a finding is only
+        marked resolved after its own page was checked again (not because the crawl happened to miss it)."""
+        if repo_id is None:
+            return []
+        conn = self.connect()
+        try:
+            rows = conn.execute("SELECT file_path, metadata_json FROM findings WHERE repository_id=? AND "
+                                "scanner='dast' AND scan_target=? AND status IN ('OPEN','UNVERIFIED')",
+                                (repo_id, target)).fetchall()
+        finally:
+            conn.close()
+        seeds: dict[tuple[str, tuple[str, ...]], tuple[str, list[str]]] = {}
+        for r in rows:
+            try:
+                params = [str(p) for p in (json.loads(r["metadata_json"] or "{}").get("params") or [])]
+            except ValueError:
+                params = []
+            path = r["file_path"] or "/"
+            seeds[(path, tuple(sorted(params)))] = (path, params)
+        return list(seeds.values())
 
     def _app_dirs_inside(self, repo_path: Path) -> list[str]:
         return [str(d.relative_to(repo_path)).replace("\\", "/") for d in self.cfg.app_dirs()
@@ -301,12 +332,12 @@ class ScanOrchestrator:
                                      os.getpid())
         report = self._report_path(repo, job, run_id)
         try:
-            ex = self._run_job(job, repo_path, report, offline)
+            ex = self._run_job(job, repo_path, report, offline, repo["id"])
         except Exception as exc:  # noqa: BLE001 - one job must not break the batch
             log.exception("Scanner job crashed", extra={"repo": repo["name"], "job": vars(job)})
             ex = ScanExecution(job.scanner, job.scan_type, job.target, "FAILED", None,
                                error_message=f"Internal error: {type(exc).__name__}: {exc}")
-        if ex.coverage is not None and job.scan_type != "image" and self.cfg.scan.skip_dirs:
+        if ex.coverage is not None and job.scan_type not in ("image", "web") and self.cfg.scan.skip_dirs:
             # Record what the scan did NOT look inside, so findings there are never marked resolved.
             ex.coverage = dataclasses.replace(ex.coverage, skip_dirs=frozenset(self.cfg.scan.skip_dirs))
         summary = RunSummary(run_id, repo["name"], job.scanner, job.scan_type, job.target, ex.status,

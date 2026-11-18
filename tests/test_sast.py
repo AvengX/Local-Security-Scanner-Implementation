@@ -110,12 +110,12 @@ def test_config_validates_skip_tests() -> None:
         AppConfig.model_validate({"sast": {"skip_tests": ["assert"]}})
 
 
-def test_migration_adds_code_category_and_keeps_rows(tmp_path: Path) -> None:
+def test_migrations_add_code_and_web_categories_and_keep_rows(tmp_path: Path) -> None:
     from database.db import init_db
     from utils.paths import SCHEMA_PATH
 
     db = tmp_path / "old.db"
-    old_schema = SCHEMA_PATH.read_text(encoding="utf-8").replace("'MISCONFIGURATION','CODE','LICENSE'",
+    old_schema = SCHEMA_PATH.read_text(encoding="utf-8").replace("'MISCONFIGURATION','CODE','WEB','LICENSE'",
                                                                  "'MISCONFIGURATION','LICENSE'")
     conn = sqlite3.connect(db)
     conn.executescript(old_schema)
@@ -135,11 +135,13 @@ def test_migration_adds_code_category_and_keeps_rows(tmp_path: Path) -> None:
     conn.close()
 
     conn = init_db(db)
-    assert conn.execute("SELECT value FROM settings WHERE key='schema_version'").fetchone()[0] == "2"
+    assert conn.execute("SELECT value FROM settings WHERE key='schema_version'").fetchone()[0] == "3"
     assert conn.execute("SELECT COUNT(*) FROM findings").fetchone()[0] == 1
     assert conn.execute("SELECT COUNT(*) FROM finding_changes").fetchone()[0] == 1
     conn.execute("INSERT INTO findings(repository_id, fingerprint, dedup_key, scanner, scan_type, category, severity, "
                  "first_seen, last_seen, status) VALUES(1, 'g', 'd', 'bandit', 'python', 'CODE', 'LOW', 'a', 'a', 'OPEN')")
+    conn.execute("INSERT INTO findings(repository_id, fingerprint, dedup_key, scanner, scan_type, category, severity, "
+                 "first_seen, last_seen, status) VALUES(1, 'h', 'd', 'dast', 'web', 'WEB', 'LOW', 'a', 'a', 'OPEN')")
     assert conn.execute("PRAGMA foreign_keys").fetchone()[0] == 1
     conn.close()
 

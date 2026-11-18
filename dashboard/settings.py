@@ -173,6 +173,30 @@ def _config_tab(cfg: AppConfig) -> None:
         sast_skip = c2.text_input("Bandit checks to skip (comma-separated)", ", ".join(cfg.sast.skip_tests),
                                   placeholder="B101", help="For example B101 (assert statements)")
 
+        section("Web scan (DAST)", "tests your running apps through their address · apps on this computer only")
+        dast_on = st.checkbox("Enable web scan (DAST)", cfg.dast.enabled,
+                              help="While an app runs, the scanner visits its pages like a browser and checks for "
+                                   "missing security headers, unsafe cookies, exposed files, debug pages, error "
+                                   "leaks, XSS, SQL injection, open redirects and path traversal. Only GET requests "
+                                   "are sent, forms that change data are never submitted, and only localhost / "
+                                   "127.0.0.1 addresses are allowed.")
+        repo_names = [r[0] for r in get_conn(cfg).execute(
+            "SELECT name FROM repositories WHERE active=1 ORDER BY name COLLATE NOCASE").fetchall()]
+        dast_rows = st.data_editor(
+            [{"Project": tg.repository, "Address": tg.url} for tg in cfg.dast.targets] or
+            [{"Project": None, "Address": ""}],
+            num_rows="dynamic", width="stretch", key="dast_targets",
+            column_config={
+                "Project": st.column_config.SelectboxColumn("Project", options=repo_names, required=False,
+                                                            help="The project whose code serves this app"),
+                "Address": st.column_config.TextColumn("App address", help="For example http://127.0.0.1:5000/ — "
+                                                       "the app must be running when the scan starts"),
+            })
+        w1, w2, w3 = st.columns(3)
+        dast_pages = w1.number_input("Pages per address", 1, 500, cfg.dast.max_pages)
+        dast_reqs = w2.number_input("Requests per address", 20, 5000, cfg.dast.max_requests)
+        dast_to = w3.number_input("Wait per response (seconds)", 1, 120, cfg.dast.request_timeout)
+
         section("5 · Reports and storage", "relative paths are resolved from the project folder")
         p1, p2, p3 = st.columns(3)
         data_dir = p1.text_input("Data directory (database)", cfg.paths.data_dir)
@@ -197,6 +221,12 @@ def _config_tab(cfg: AppConfig) -> None:
         data["gitleaks"].update(enabled=gl_on, modes=gl_modes, config_path=gl_cfg.strip() or None,
                                 log_opts=gl_log.strip() or None)
         data["sast"] = dict(enabled=sast_on, skip_tests=[x.strip() for x in sast_skip.split(",") if x.strip()])
+        rows = dast_rows.to_dict("records") if hasattr(dast_rows, "to_dict") else list(dast_rows)
+        data["dast"] = dict(enabled=dast_on, max_pages=int(dast_pages), max_requests=int(dast_reqs),
+                            request_timeout=int(dast_to),
+                            targets=[{"repository": str(r.get("Project") or "").strip(),
+                                      "url": str(r.get("Address") or "").strip()}
+                                     for r in rows if str(r.get("Address") or "").strip() or r.get("Project")])
         data["paths"].update(data_dir=data_dir.strip(), reports_dir=reports_dir.strip(), logs_dir=logs_dir.strip())
         try:
             new_cfg = AppConfig.model_validate(data)

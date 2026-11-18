@@ -30,7 +30,7 @@ SEVERITY_COLORS: dict[str, str] = {
 # Shape glyphs make severity readable without relying on colour alone.
 SEVERITY_GLYPH: dict[str, str] = {"CRITICAL": "◆", "HIGH": "▲", "MEDIUM": "●", "LOW": "▼", "UNKNOWN": "○"}
 CATEGORY_COLORS: dict[str, str] = {
-    "VULNERABILITY": "#8B5CF6", "SECRET": "#EF4444", "MISCONFIGURATION": "#F59E0B", "CODE": "#06B6D4", "LICENSE": "#14B8A6",
+    "VULNERABILITY": "#8B5CF6", "SECRET": "#EF4444", "MISCONFIGURATION": "#F59E0B", "CODE": "#06B6D4", "WEB": "#EC4899", "LICENSE": "#14B8A6",
     "OTHER": "#64748B",
 }
 STATUS_COLORS: dict[str, str] = {
@@ -57,6 +57,7 @@ _ICON_PATHS: dict[str, str] = {
     "flame": "M12 3c1 4 5 5.5 5 10a5 5 0 01-10 0c0-2.5 1.5-4 2.5-5 .3 2 1.2 3 2.5 3-1-3 0-6 0-8z",
     "key": "M14.5 9.5a4 4 0 11-1.2-2.8 M13.3 6.7L20 13.4V17h-3v-2h-2v-2l-1.7-1.7",
     "code": "M8 7l-5 5 5 5 M16 7l5 5-5 5 M14 4l-4 16",
+    "globe": "M12 3a9 9 0 1 0 0 18a9 9 0 1 0 0-18 M3 12h18 M12 3c2.5 2.6 3.8 5.6 3.8 9s-1.3 6.4-3.8 9 M12 3c-2.5 2.6-3.8 5.6-3.8 9s1.3 6.4 3.8 9",
     "sliders": "M5 6h9 M18 6h1 M5 12h3 M12 12h7 M5 18h11 M20 18h-0 M14 4v4 M8 10v4 M16 16v4",
     "x_circle": "M12 21a9 9 0 100-18 9 9 0 000 18z M9 9l6 6 M15 9l-6 6",
     "check_circle": "M12 21a9 9 0 100-18 9 9 0 000 18z M8 12l3 3 5-6",

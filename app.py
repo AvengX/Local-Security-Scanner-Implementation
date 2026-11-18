@@ -20,7 +20,7 @@ st.set_page_config(page_title="Local Security Scanner", page_icon=str(ROOT / "da
                    layout="wide", initial_sidebar_state="auto")
 
 from dashboard import (code_issues, findings, history, misconfigurations, overview, reports,  # noqa: E402
-                       repositories, secrets, settings, vapt, vulnerabilities)
+                       repositories, secrets, settings, vapt, vulnerabilities, web_issues)
 from dashboard.common import (PAGES, get_config, get_conn, inject_css, misconfig_relevant, notice,  # noqa: E402
                               render_sidebar, sync_roots)
 from utils.logger import setup_logging  # noqa: E402
@@ -51,6 +51,7 @@ def main() -> None:
                                 "vulnerabilities"),
         "secrets": page(secrets.render, "Secrets", ":material/key:", "secrets"),
         "code": page(code_issues.render, "Code issues", ":material/code:", "code-issues"),
+        "web": page(web_issues.render, "Web app issues", ":material/language:", "web-issues"),
         "misconfigurations": page(misconfigurations.render, "Misconfigurations", ":material/tune:",
                                   "misconfigurations"),
         "repositories": page(repositories.render, "Repositories", ":material/folder_code:", "repositories"),
@@ -64,8 +65,12 @@ def main() -> None:
     # Hidden while no project has a Dockerfile / Compose / Kubernetes / Helm / Terraform file (nothing to check).
     if not misconfig_relevant(cfg, conn):
         pages.pop("misconfigurations")
+    if not cfg.dast.enabled and not conn.execute(
+            "SELECT 1 FROM findings WHERE category='WEB' AND status IN ('OPEN','UNVERIFIED') LIMIT 1").fetchone():
+        pages.pop("web")
     PAGES.update(pages)
-    monitor = [pages[k] for k in ("overview", "findings", "vulnerabilities", "secrets", "code", "misconfigurations")
+    monitor = [pages[k] for k in ("overview", "findings", "vulnerabilities", "secrets", "code", "web",
+                                         "misconfigurations")
                if k in pages]
     nav = st.navigation({
         "Monitor": monitor,

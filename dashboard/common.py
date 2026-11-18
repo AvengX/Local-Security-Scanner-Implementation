@@ -351,6 +351,9 @@ def render_sidebar(cfg: AppConfig, conn: sqlite3.Connection) -> None:
     rows = [("Trivy", health["trivy"]["state"], health["trivy"]["label"]),
             ("Gitleaks", health["gitleaks"]["state"], health["gitleaks"]["label"]),
             *([("Bandit (code)", health["bandit"]["state"], health["bandit"]["label"])] if cfg.sast.enabled else []),
+            *([("Web scan (DAST)", "ok" if cfg.dast.targets else "warn",
+                f"{len(cfg.dast.targets)} address{'es' if len(cfg.dast.targets) != 1 else ''}" if cfg.dast.targets
+                else "No addresses")] if cfg.dast.enabled else []),
             ("Vuln DB", vstate, vlabel),
             ("Database", dbh["state"], dbh["label"])]
     body = "".join(f"<div class='lss-health-row' style='--c:{t.TONES[s]}'><span>{t.esc(n)}</span>"

@@ -22,14 +22,17 @@ from utils.security import same_process_alive
 LAB = PROJECT_ROOT / "vapt_lab"
 SCRIPT = PROJECT_ROOT / "vapt" / "run_vapt_test.py"
 SCENARIO = [
-    ("vuln-python-app", "Dependencies + secrets + code (SAST)",
+    ("vuln-python-app", "Dependencies + secrets + code (SAST) + running app (DAST)",
      "requests 2.25.0, urllib3 1.26.4, PyYAML 5.3, Jinja2 2.10; fake AWS key + GitHub token in code; a token only in "
      "Git history; SQL injection, shell=True, pickle.loads, yaml.load and a hardcoded password in app/db.py; a fake "
-     "token and unsafe code inside an untracked .venv (must be skipped)"),
+     "token and unsafe code inside an untracked .venv (must be skipped); a local web app with XSS, SQL injection, "
+     "open redirect, path traversal, exposed .env, debugger console, stack traces, directory listing, open CORS and "
+     "an unsafe cookie (log-out/delete links must never be followed)"),
     ("vuln-node-app", "Dependencies", "lodash 4.17.15 and minimist 1.2.0 in package-lock.json"),
     ("insecure-infra", "Infrastructure as code", "Dockerfile (:latest, root, ADD from URL), privileged Kubernetes "
      "pod with hostNetwork, Terraform S3 without public-access block, SSH open to 0.0.0.0/0"),
-    ("clean-app", "False-positive control", "Nothing planted — must produce zero findings"),
+    ("clean-app", "False-positive control", "Nothing planted, plus a correctly secured local web app — must "
+     "produce zero findings"),
 ]
 
 
@@ -131,7 +134,7 @@ def render() -> None:
             mark_queued("vapt")
             st.toast(f"VAPT test started (pid {pid}). Press Refresh in about two minutes.", icon=":material/science:")
             st.rerun()
-        c2.caption("Recreates the lab, runs discovery, full and offline scans (incl. the SAST code scan), remediation "
+        c2.caption("Recreates the lab, runs discovery, full and offline scans (incl. the SAST code scan and the DAST web scan of two local lab apps), remediation "
                    "rescans, exports and a secret-leak audit. Output: vapt_lab\\VAPT_TEST_RESULTS.md · log: logs\\vapt_runs.log")
     if running:
         notice("info", "VAPT test in progress", "Results appear here automatically when it finishes (about 1–2 "

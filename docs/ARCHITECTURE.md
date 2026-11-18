@@ -9,10 +9,10 @@ Repository Discovery Engine  (engine/repository_discovery.py)
      ├─ per-repository DB lock (repo_locks table) – no duplicate concurrent scans
      ├─ bounded ThreadPoolExecutor (scan.concurrency, default 1)
      │
-     ├──────────────┬─────────────────┬──────────────────┐
-     ▼              ▼                 ▼                  ▼
-  TrivyScanner   GitleaksScanner   BanditScanner (SAST)  (SBOM / image jobs via Trivy)
-  engine/trivy_scanner.py   engine/gitleaks_scanner.py   engine/sast_scanner.py
+     ├──────────────┬─────────────────┬──────────────────┬───────────────────┐
+     ▼              ▼                 ▼                  ▼                   ▼
+  TrivyScanner   GitleaksScanner   BanditScanner (SAST)  DastScanner (DAST)  (SBOM / image jobs via Trivy)
+  engine/trivy_scanner.py   engine/gitleaks_scanner.py   engine/sast_scanner.py   engine/dast_scanner.py
      │  subprocess argument lists via engine/runner.py (no shell, timeouts, cancellation)
      ▼
   JSON Report Parser          (engine/report_parser.py)
@@ -75,3 +75,20 @@ Repository Discovery Engine  (engine/repository_discovery.py)
 * Code snippets are never stored, and the saved raw report is rewritten without them. B105/B106/B107 messages
   (which contain the suspected password) are replaced by a fixed text.
 * `assert` (B101) in test files is not reported. `sast.skip_tests` skips checks everywhere.
+
+## DAST (built-in web scan)
+* `engine/dast_scanner.py` tests a running app through its address. One job per `dast.targets` entry
+  (`Job("dast", "web", url)`); the URL is the scan target, so each address resolves only its own findings.
+* Loopback only: `validate_dast_url` (config) and `Client.request` (every request) refuse other hosts; no proxy;
+  redirects are returned, never followed off the app. GET only (plus one TRACE probe); POST forms are never
+  submitted; links matching logout/delete/reset/… are not followed. Budgets: pages, requests, seconds per
+  response, `scan.timeout_seconds` overall; `CANCEL_EVENT` is checked before each request.
+* Order: start page (site checks: headers, cookies, version), file probes (`.env`, `.git`, DB files, SQL dumps,
+  `/console`), CORS and TRACE probes, error page, then a breadth-first crawl. **Earlier open/unverified findings'
+  pages are queued first** (`ScanOrchestrator._dast_seeds`), so a finding is resolved only after its own page was
+  re-tested. If the request budget runs out before those are re-tested the run is FAILED (nothing resolved).
+* Parameter probes per URL parameter / GET form field: XSS marker reflected unescaped, SQL error signatures that
+  were not in the normal response, open redirect (redirect-like names), path traversal (file-like names).
+* App not answering → `SKIPPED` with coverage, so open findings become UNVERIFIED (never RESOLVED).
+* Findings: category `WEB` (schema v3 migration), `file_path` = page path, metadata = url, parameter, params,
+  evidence, CWE. Response bodies are never stored; the raw report lists pages tested, request counts and findings.

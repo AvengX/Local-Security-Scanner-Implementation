@@ -5,12 +5,15 @@ CLI (`run_scan.py`) exactly as a user would, and verifies the results with PASS/
 
   Phase 1  tool health                      Phase 5  remediation -> finding RESOLVED
   Phase 2  discovery                        Phase 6  offline scan with cached DB
-  Phase 3  full scan (Trivy + Gitleaks)     Phase 7  report export
+  Phase 3  full scan (all scanners + DAST)  Phase 7  report export
   Phase 4  detection checks                 Phase 8  secret-leak audit of DB, reports and logs
 
+The DAST checks run against two small web apps (vapt/lab_web_app.py) started on 127.0.0.1 by this test: one
+deliberately unsafe, one done right.
+
 Results: vapt_lab/VAPT_TEST_RESULTS.md and .json. Exit code 0 only if every check passes.
-Scope note: this validates the vulnerability-assessment (static scanning) part of VAPT. It does not perform
-penetration testing (no network attacks, no exploitation) — see docs/VAPT_TEST.md.
+Scope note: static scanning plus a safe, GET-only web scan of local lab apps. It is not a manual penetration
+test (no exploitation beyond detection) — see docs/VAPT_TEST.md.
 """
 
 from __future__ import annotations
@@ -32,6 +35,7 @@ PROJECT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT))
 
 from vapt.create_lab import _rmtree, create_lab, fix_sql_injection, upgrade_python_dependency  # noqa: E402
+from vapt.lab_web_app import LabWebApp  # noqa: E402
 
 REPOS = {"vuln-python-app", "vuln-node-app", "insecure-infra", "clean-app"}
 SUCCESS = ("COMPLETED", "COMPLETED_WITH_FINDINGS")
@@ -64,6 +68,8 @@ class Vapt:
         self.cfg_path = lab / "config.vapt.yaml"
         self.app = lab / "app"
         self.r = Report()
+        self.web_vuln: LabWebApp | None = None
+        self.web_clean: LabWebApp | None = None
 
     # ------------------------------------------------------------------ helpers
     def cli(self, *args: str, timeout: int = 3600) -> tuple[int, str]:
@@ -102,6 +108,8 @@ class Vapt:
         print("\n== Setup: building VAPT lab")
         _rmtree(self.app)
         meta = create_lab(self.lab)
+        self.web_vuln = LabWebApp("vulnerable", meta["secrets"]["dast_env_password"]).start()
+        self.web_clean = LabWebApp("clean").start()
         cfg = {
             "repository_roots": [meta["targets"]],
             "paths": {"data_dir": str(self.app / "data"), "reports_dir": str(self.app / "reports"),
@@ -110,9 +118,12 @@ class Vapt:
             "trivy": {"scan_types": ["fs", "config"], "scanners": ["vuln", "misconfig", "secret"],
                       "generate_sbom": True},
             "gitleaks": {"modes": ["git", "dir"]},
+            "dast": {"targets": [{"repository": "vuln-python-app", "url": self.web_vuln.url},
+                                 {"repository": "clean-app", "url": self.web_clean.url}]},
         }
         self.cfg_path.write_text(yaml.safe_dump(cfg, sort_keys=False), encoding="utf-8")
         print(f"  lab: {meta['targets']}")
+        print(f"  web apps: {self.web_vuln.url} (unsafe), {self.web_clean.url} (clean)")
         return meta
 
     def phase_health(self) -> bool:
@@ -123,6 +134,7 @@ class Vapt:
                    next((ln.strip() for ln in out.splitlines() if ln.strip().startswith("trivy")), ""))
         self.r.add("1 Health", "Gitleaks installed and runnable", "gitleaks  OK" in out)
         self.r.add("1 Health", "Bandit (SAST) installed and runnable", "bandit    OK" in out)
+        self.r.add("1 Health", "Web scan (DAST) built in and ready", "dast      OK" in out)
         db_line = next((ln.strip() for ln in out.splitlines() if "Vulnerability DB" in ln), "")
         self.r.add("1 Health", "Trivy vulnerability DB cached and fresh",
                    "No cached" not in db_line and "STALE" not in db_line, db_line)
@@ -136,7 +148,7 @@ class Vapt:
         self.r.add("2 Discovery", "All 4 lab repositories discovered", names == REPOS, ", ".join(sorted(names)))
 
     def phase_scan(self) -> int:
-        print("\n== Phase 3: full scan (Trivy fs + config + SBOM, Gitleaks git + dir, Bandit)")
+        print("\n== Phase 3: full scan (Trivy fs + config + SBOM, Gitleaks git + dir, Bandit, DAST)")
         code, out = self.cli("scan-all")
         last = self.max_run_id()
         bad = self.q("SELECT r.name, s.scanner, s.scan_type, s.status, s.error_message FROM scan_runs s "
@@ -146,7 +158,8 @@ class Vapt:
                    "; ".join(f"{b['name']} {b['scanner']}:{b['scan_type']}={b['status']} {b['error_message'] or ''}"
                              for b in bad)[:400])
         total = self.q("SELECT COUNT(*) c FROM scan_runs")[0]["c"]
-        self.r.add("3 Scan", "24 scanner runs recorded (4 repos x 6 jobs)", total == 24, f"{total} runs")
+        self.r.add("3 Scan", "26 scanner runs recorded (4 repos x 6 jobs + 2 web addresses)", total == 26,
+                   f"{total} runs")
         meta_ok = self.q("SELECT COUNT(*) c FROM scan_runs WHERE tool_version IS NULL OR "
                          "(scanner='trivy' AND database_updated_at IS NULL)")[0]["c"] == 0
         self.r.add("3 Scan", "Tool version and Trivy DB timestamp recorded on every run", meta_ok)
@@ -217,6 +230,30 @@ class Vapt:
         self.r.add("4 Detection", "SAST: repositories without Python report no code issues",
                    not f("insecure-infra", "category='CODE'") and not f("vuln-node-app", "category='CODE'"))
 
+        web = f("vuln-python-app", "category='WEB'")
+        checks = {r["rule_id"]: r for r in web}
+        for rule, what in (("DAST-XSS", "reflected XSS"), ("DAST-SQLI", "SQL injection (database error)"),
+                           ("DAST-REDIRECT", "open redirect"), ("DAST-TRAVERSAL", "path traversal"),
+                           ("DAST-EXPOSED-FILE", "exposed .env file"), ("DAST-DEBUG", "debugger console exposed"),
+                           ("DAST-ERROR-LEAK", "stack trace in error page"), ("DAST-DIR-LISTING", "directory listing"),
+                           ("DAST-CORS", "CORS allows any origin"), ("DAST-COOKIE-HTTPONLY", "cookie without HttpOnly"),
+                           ("DAST-CSP", "missing security headers")):
+            hit = checks.get(rule)
+            self.r.add("4 Detection", f"DAST: {what} detected ({rule})", hit is not None,
+                       f"{hit['file_path']} {hit['severity']}" if hit else ", ".join(sorted(checks)))
+        self.r.add("4 Detection", "DAST: issues carry page, evidence and remediation",
+                   bool(web) and all(r["file_path"] and r["remediation"] and '"evidence"' in (r["metadata_json"] or "")
+                                     for r in web), f"{len(web)} web app issues")
+        assert self.web_vuln is not None
+        self.r.add("4 Detection", "DAST: never followed log-out/delete links or sent POST requests",
+                   self.web_vuln.state.destructive_hits == 0 and self.web_vuln.state.post_hits == 0,
+                   f"{self.web_vuln.state.destructive_hits} destructive GETs, {self.web_vuln.state.post_hits} POSTs")
+        refused = subprocess.run([self.python, "-c", "from utils.config import AppConfig; AppConfig.model_validate("
+                                  "{'dast': {'targets': [{'repository': 'x', 'url': 'http://example.com/'}]}})"],
+                                 capture_output=True, text=True, cwd=PROJECT)
+        self.r.add("4 Detection", "DAST: non-local addresses are refused by the configuration",
+                   refused.returncode != 0 and "limited to apps on this computer" in refused.stderr)
+
         clean = f("clean-app")
         clean_runs = self.runs("clean-app")
         self.r.add("4 Detection", "Clean control repo: zero findings (no false positives)", not clean,
@@ -254,6 +291,24 @@ class Vapt:
         still = self.findings("vuln-python-app", "category='CODE' AND rule_id='B602' AND status='OPEN'")
         self.r.add("5 Remediation", "Unfixed code issue (shell=True) stays OPEN with its history", bool(still))
         resolved_count = self.q("SELECT SUM(resolved_count) s FROM scan_runs WHERE id>?", before)[0]["s"] or 0
+        assert self.web_vuln is not None
+        self.web_vuln.state.xss_fixed = True  # the app now escapes the search term
+        code3, _ = self.cli("scan-repo", "--name", "vuln-python-app")
+        xss = self.findings("vuln-python-app", "category='WEB' AND rule_id='DAST-XSS'")
+        self.r.add("5 Remediation", "Fixed XSS in the running app marked RESOLVED after rescan",
+                   code3 == 0 and bool(xss) and all(r["status"] == "RESOLVED" for r in xss),
+                   ", ".join(r["status"] for r in xss) or "missing")
+        sqli_web = self.findings("vuln-python-app", "category='WEB' AND rule_id='DAST-SQLI' AND status='OPEN'")
+        self.r.add("5 Remediation", "Unfixed web issue (SQL injection) stays OPEN", bool(sqli_web))
+        self.web_vuln.stop()  # app no longer running: findings must not be marked resolved
+        self.cli("scan-repo", "--name", "vuln-python-app")
+        last = self.q("SELECT status FROM scan_runs WHERE scanner='dast' AND scan_target=? ORDER BY id DESC LIMIT 1",
+                      self.web_vuln.url)
+        web_now = self.findings("vuln-python-app", "category='WEB' AND rule_id != 'DAST-XSS'")
+        self.r.add("5 Remediation", "App not running: web scan SKIPPED and its issues become UNVERIFIED (not resolved)",
+                   bool(last) and last[0]["status"] == "SKIPPED" and bool(web_now)
+                   and all(r["status"] == "UNVERIFIED" for r in web_now),
+                   (last[0]["status"] if last else "no run") + f", {len(web_now)} kept")
         self.r.add("5 Remediation", "Scan run records resolved count", resolved_count >= 1, str(resolved_count))
 
     def phase_offline(self) -> None:
@@ -277,9 +332,9 @@ class Vapt:
         code, out = self.cli("status")
         self.r.add("7 Reports", "status command summarises posture", code == 0 and "Repositories: 4" in out)
         raw = list((self.app / "reports").rglob("*_run*.json"))
-        self.r.add("7 Reports", "Raw Trivy, Gitleaks and Bandit JSON reports kept locally",
+        self.r.add("7 Reports", "Raw Trivy, Gitleaks, Bandit and DAST JSON reports kept locally",
                    any("_trivy_" in p.name for p in raw) and any("_gitleaks_" in p.name for p in raw)
-                   and any("_bandit_" in p.name for p in raw),
+                   and any("_bandit_" in p.name for p in raw) and any("_dast_" in p.name for p in raw),
                    f"{len(raw)} raw reports")
 
     def phase_leak_audit(self, secrets: dict[str, str]) -> None:
@@ -304,8 +359,8 @@ class Vapt:
                  f"Started: {started}  ", f"Finished: {datetime.now(timezone.utc).isoformat(timespec='seconds')}  ",
                  f"Lab: `{self.lab / 'targets'}`  ", f"Result: **{passed}/{total} checks passed** — "
                  f"{'PASS' if passed == total else 'FAIL'}", "",
-                 "Scope: vulnerability assessment by static scanning (dependencies, IaC, secrets). "
-                 "No penetration testing / network attacks were performed.", "",
+                 "Scope: static scanning (dependencies, IaC, secrets, code) plus a safe GET-only web scan (DAST) "
+                 "of two lab apps on 127.0.0.1. No manual penetration testing or exploitation.", "",
                  "| Phase | Check | Result | Detail |", "|---|---|---|---|"]
         for c in self.r.checks:
             lines.append(f"| {c.phase} | {c.name} | {'PASS' if c.passed else '**FAIL**'} | "
@@ -338,6 +393,12 @@ class Vapt:
             return self._run(started)
         finally:
             marker.unlink(missing_ok=True)
+            for web in (self.web_vuln, self.web_clean):
+                if web is not None:
+                    try:
+                        web.stop()
+                    except OSError:
+                        pass
 
     def _run(self, started: str) -> int:
         meta = self.setup()

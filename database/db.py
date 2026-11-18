@@ -14,19 +14,19 @@ from utils.paths import SCHEMA_PATH
 
 log = get_logger(__name__)
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 
-def _allow_code_category(conn: sqlite3.Connection) -> None:
-    """v2: allow category 'CODE' (SAST findings from Bandit). SQLite cannot alter a CHECK constraint, so the
-    findings table is rebuilt (official 12-step procedure; foreign keys are switched off around it by init_db)."""
+def _rebuild_findings_with_category(conn: sqlite3.Connection, category: str, after: str) -> None:
+    """Allow a new findings category. SQLite cannot alter a CHECK constraint, so the findings table is rebuilt
+    (official 12-step procedure; foreign keys are switched off around it by init_db). Rows and history are kept."""
     row = conn.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='findings'").fetchone()
-    if row is None or "'CODE'" in row[0]:
+    if row is None or f"'{category}'" in row[0]:
         return
     new_sql = re.sub(r"CREATE TABLE\s+(IF NOT EXISTS\s+)?\"?findings\"?", "CREATE TABLE findings_new", row[0],
                      count=1)
-    new_sql = new_sql.replace("'MISCONFIGURATION','LICENSE'", "'MISCONFIGURATION','CODE','LICENSE'")
-    if "'CODE'" not in new_sql:
+    new_sql = new_sql.replace(f"'{after}',", f"'{after}','{category}',", 1)
+    if f"'{category}'" not in new_sql:
         raise RuntimeError("Could not update the findings category constraint")
     cols = ", ".join(r[1] for r in conn.execute("PRAGMA table_info(findings)"))
     conn.execute(new_sql)
@@ -38,9 +38,20 @@ def _allow_code_category(conn: sqlite3.Connection) -> None:
         raise RuntimeError(f"Foreign key check failed after migration: {len(bad)} row(s)")
 
 
+def _allow_code_category(conn: sqlite3.Connection) -> None:
+    """v2: allow category 'CODE' (SAST findings from Bandit)."""
+    _rebuild_findings_with_category(conn, "CODE", "MISCONFIGURATION")
+
+
+def _allow_web_category(conn: sqlite3.Connection) -> None:
+    """v3: allow category 'WEB' (DAST findings from the built-in web scan)."""
+    _rebuild_findings_with_category(conn, "WEB", "CODE")
+
+
 # Ordered migrations: (target_version, callable). Each runs inside a transaction.
 # Future schema changes append here; never edit a released migration.
-MIGRATIONS: list[tuple[int, Callable[[sqlite3.Connection], None]]] = [(2, _allow_code_category)]
+MIGRATIONS: list[tuple[int, Callable[[sqlite3.Connection], None]]] = [(2, _allow_code_category),
+                                                                      (3, _allow_web_category)]
 
 
 def utcnow() -> str:

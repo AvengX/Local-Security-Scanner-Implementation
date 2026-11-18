@@ -135,6 +135,46 @@ class SastConfig(_Strict):
         return list(dict.fromkeys(cleaned))
 
 
+class DastTarget(_Strict):
+    repository: str = Field(description="Name of the project that serves this web app")
+    url: str = Field(description="Address of the running app, e.g. http://127.0.0.1:5000/")
+
+    @field_validator("repository")
+    @classmethod
+    def _repo(cls, value: str) -> str:
+        return v.validate_repo_name(value.strip())
+
+    @field_validator("url")
+    @classmethod
+    def _url(cls, value: str) -> str:
+        return v.validate_dast_url(value)
+
+
+class DastConfig(_Strict):
+    """Built-in dynamic scan (DAST) of the user's own running web apps. Loopback addresses only."""
+
+    enabled: bool = True
+    targets: list[DastTarget] = Field(default_factory=list)
+    max_pages: int = Field(30, ge=1, le=500, description="Pages followed per address")
+    max_requests: int = Field(400, ge=20, le=5000, description="Requests sent per address")
+    request_timeout: int = Field(10, ge=1, le=120, description="Seconds to wait for one response")
+
+    @field_validator("targets")
+    @classmethod
+    def _targets(cls, value: list[DastTarget]) -> list[DastTarget]:
+        seen: set[tuple[str, str]] = set()
+        out = []
+        for t in value:
+            key = (t.repository.lower(), t.url)
+            if key not in seen:
+                seen.add(key)
+                out.append(t)
+        return out
+
+    def targets_for(self, repository: str) -> list[str]:
+        return [t.url for t in self.targets if t.repository == repository]
+
+
 class DashboardConfig(_Strict):
     host: str = "127.0.0.1"
     port: int = Field(8501, ge=1024, le=65535)
@@ -167,6 +207,7 @@ class AppConfig(_Strict):
     trivy: TrivyConfig = Field(default_factory=TrivyConfig)
     gitleaks: GitleaksConfig = Field(default_factory=GitleaksConfig)
     sast: SastConfig = Field(default_factory=SastConfig)
+    dast: DastConfig = Field(default_factory=DastConfig)
     dashboard: DashboardConfig = Field(default_factory=DashboardConfig)
     schedule: ScheduleConfig = Field(default_factory=ScheduleConfig)
 

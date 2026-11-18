@@ -38,6 +38,7 @@ def fake_secrets() -> dict[str, str]:
         "github_pat_history": "ghp_" + _rand(string.ascii_letters + string.digits, 36),
         "github_pat_venv": "ghp_" + _rand(string.ascii_letters + string.digits, 36),
         "sast_db_password": "pw-" + _rand(string.ascii_letters + string.digits, 20),
+        "dast_env_password": "envpw-" + _rand(string.ascii_letters + string.digits, 20),  # served by the lab web app
     }
 
 

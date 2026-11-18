@@ -264,6 +264,11 @@ def _tool_info(cfg: AppConfig) -> dict[str, dict]:
     bandit = check_bandit()  # a Python package run with the scanner's interpreter: no separate binary to hash
     out["bandit"] = {"tool": bandit, "path": "python -m bandit" if bandit.installed else None,
                      "version": bandit.version, "sha256": None}
+    if cfg.dast.enabled:
+        from engine.scanner_health import check_dast
+
+        dast = check_dast()
+        out["dast"] = {"tool": dast, "path": "built-in", "version": dast.version, "sha256": None}
     return out
 
 
@@ -298,6 +303,10 @@ def _commands(cfg: AppConfig, tools: dict[str, dict]) -> list[tuple[str, str]]:
             Path("<report.json>"), exclude_patterns(cfg.scan.skip_dirs, []), cfg.sast.skip_tests)
         argv = ["<generated bandit.ini>" if a.endswith("bandit.ini") else a for a in argv]
         cmds.append(("Bandit code scan (run inside <repo-root>)", show(argv, "python")))
+    if cfg.dast.enabled and cfg.dast.targets:
+        cmds.append(("Web scan (DAST, built in)", f"GET-only crawl of each configured local address · max "
+                     f"{cfg.dast.max_pages} pages, {cfg.dast.max_requests} requests, {cfg.dast.request_timeout}s per "
+                     "response"))
     return cmds
 
 
@@ -332,17 +341,20 @@ def build_audit(conn: sqlite3.Connection, cfg: AppConfig, repository_id: int,
                       key=lambda r: (SEV_RANK.get(r["severity"], 9), r["file_path"] or "", r["line"] or 0))
     code = sorted((r for r in active if r["category"] == "CODE"),
                   key=lambda r: (SEV_RANK.get(r["severity"], 9), r["file_path"] or "", r["line"] or 0))
-    others = [r for r in active if r["category"] not in ("VULNERABILITY", "SECRET", "MISCONFIGURATION", "CODE")]
+    web = sorted((r for r in active if r["category"] == "WEB"),
+                 key=lambda r: (SEV_RANK.get(r["severity"], 9), r["scan_target"] or "", r["file_path"] or ""))
+    others = [r for r in active if r["category"] not in ("VULNERABILITY", "SECRET", "MISCONFIGURATION", "CODE",
+                                                         "WEB")]
     # One entry per real issue: the same configuration check reported by both 'trivy fs' and 'trivy config'
     # is counted once.
-    active = [*vulns, *secrets, *misconfs, *code, *others]
+    active = [*vulns, *secrets, *misconfs, *code, *web, *others]
 
     return {
         "generated_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
         "app_version": __version__, "repo": repo, "git": git, "tools": tools, "commands": _commands(cfg, tools),
         "attempts": attempts, "ok_runs": ok_runs, "trivy_fs": trivy_fs, "raw": raw,
         "active": active, "resolved": resolved, "vulns": vulns, "packages": _package_groups(vulns),
-        "secrets": secrets, "misconfs": misconfs, "code": code, "others": others, "offline": cfg.scan.offline,
+        "secrets": secrets, "misconfs": misconfs, "code": code, "web": web, "others": others, "offline": cfg.scan.offline,
         "skip_dirs": list(cfg.scan.skip_dirs), "reports_dir": cfg.reports_dir,
     }
 
@@ -453,7 +465,8 @@ def executive_summary(d: dict) -> list[str]:
         f"The scanners report <b>{len(d['active'])}</b> active finding(s) for <b>{_e(d['repo']['name'])}</b>: "
         f"{len(vulns)} dependency vulnerabilit{'y' if len(vulns) == 1 else 'ies'} in {len(pk)} package/version "
         f"combination(s) ({advisories} distinct advisories), {len(secrets)} potential secret(s), "
-        f"{len(d.get('code', []))} code issue(s) and {len(mis)} misconfiguration(s). By severity: {sev_txt}."
+        f"{len(d.get('code', []))} code issue(s), {len(d.get('web', []))} web app issue(s) and {len(mis)} "
+        f"misconfiguration(s). By severity: {sev_txt}."
         + (f" {len(d['resolved'])} earlier finding(s) have been confirmed resolved by later scans." if d["resolved"] else ""))
     crit = [v for v in vulns if v["severity"] == "CRITICAL"][:3]
     if crit:
@@ -498,10 +511,16 @@ def executive_summary(d: dict) -> list[str]:
         paras.append(f"<b>Code issues (SAST):</b> {len(code)} risky pattern(s) in the project's own Python code, "
                      "found by Bandit without running the code. Most frequent checks: "
                      + ", ".join(f"{_e(k)} ({n})" for k, n in top) + ". See section 11 for each file, line and fix.")
+    web = d.get("web", [])
+    if web:
+        worst = Counter(r["severity"] for r in web)
+        paras.append(f"<b>Web app issues (DAST):</b> {len(web)} problem(s) found by testing the running application "
+                     f"through its web address ({', '.join(f'{worst[s]} {s.title()}' for s in SEVERITIES if worst[s])})."
+                     " See section 12 for each page and fix.")
     if not d["active"]:
-        paras.append("No active vulnerabilities, secrets, code issues or misconfigurations were reported by the latest "
-                     "successful scans. This is a clean result for the scanned scope, not missing data (see section 1 "
-                     "and the limitations in section 13).")
+        paras.append("No active vulnerabilities, secrets, code issues, web app issues or misconfigurations were "
+                     "reported by the latest successful scans. This is a clean result for the scanned scope, not missing "
+                     "data (see section 1 and the limitations in section 14).")
     return paras
 
 
@@ -582,7 +601,8 @@ def render_audit_html(d: dict) -> str:
                 "Severity distribution and affected packages", "Detailed vulnerability findings",
                 "Advisory IDs and CVSS scores", "Direct versus transitive classification",
                 "Fixed versions and remediation guidance", "Secrets", "Misconfigurations",
-                "Code issues (static analysis)", "Authoritative advisory references",
+                "Code issues (static analysis)", "Web app issues (dynamic testing)",
+                "Authoritative advisory references",
                 "Methodology, scan limitations and raw results"]
     s.append("<h2>Contents</h2><ol class='toc'>" + "".join(f"<li><a href='#s{i}'>{t}</a></li>"
                                                          for i, t in enumerate(sections, 1)) + "</ol>")
@@ -670,6 +690,7 @@ def render_audit_html(d: dict) -> str:
          f"{sum(1 for x in d['secrets'] if _found_in(x) == 'Git history')}. Values never stored."],
         ["Misconfigurations", str(len(d["misconfs"])), "Failed Trivy configuration checks."],
         ["Code issues (SAST)", str(len(d.get("code", []))), "Risky patterns in the project's own Python code (Bandit)."],
+        ["Web app issues (DAST)", str(len(d.get("web", []))), "Found by testing the running app through its address."],
     ], {1}))
 
     # 4 -------------------------------------------------------------- severity distribution
@@ -679,14 +700,16 @@ def render_audit_html(d: dict) -> str:
         cat = Counter(r["category"] for r in d["active"] if r["severity"] == sv)
         n = sum(cat.values())
         rows4.append([_sev(sv), str(cat.get("VULNERABILITY", 0)), str(len({v["vulnerability_id"] for v in vulns if v["severity"] == sv})),
-                      str(cat.get("SECRET", 0)), str(cat.get("MISCONFIGURATION", 0)), str(cat.get("CODE", 0)), str(n),
+                      str(cat.get("SECRET", 0)), str(cat.get("MISCONFIGURATION", 0)), str(cat.get("CODE", 0)),
+                      str(cat.get("WEB", 0)), str(n),
                       f"{100 * n / total:.1f}%"])
     rows4.append(["<b>Total</b>", str(len(vulns)), str(len(adv)), str(len(d["secrets"])), str(len(d["misconfs"])),
-                  str(len(d.get("code", []))), str(len(d["active"])), "100%" if d["active"] else "—"])
+                  str(len(d.get("code", []))), str(len(d.get("web", []))), str(len(d["active"])),
+                  "100%" if d["active"] else "—"])
     s.append(h2(4) + "<p>Severity labels are the ones Trivy assigns (from its vendor severity source, shown per finding in "
              "section 5). CVSS scores are listed alongside; the two can differ.</p>"
              + _table(["Severity", "Vulnerabilities", "Distinct advisories", "Secrets", "Misconfigurations", "Code",
-                       "All", "Share"], rows4, {1, 2, 3, 4, 5, 6, 7}))
+                       "Web", "All", "Share"], rows4, {1, 2, 3, 4, 5, 6, 7, 8}))
     if pk:
         s.append("<h3>Affected packages at a glance</h3>" + _table(
             ["Package", "Installed", "Manifest", "Scope", "Relation", "Findings", "Highest", "Upgrade to (clears all listed)"],
@@ -792,6 +815,9 @@ def render_audit_html(d: dict) -> str:
     if d.get("code"):
         s.append("<h3>Code issues</h3><p>Change the code as described for each item in section 11 and rescan. If an "
                  "item is a confirmed false positive, mark it with a <code># nosec Bxxx</code> comment explaining why.</p>")
+    if d.get("web"):
+        s.append("<h3>Web app issues</h3><p>Apply the fix listed for each item in section 12, restart the app and "
+                 "rescan the project while the app is running.</p>")
 
     # 9 -------------------------------------------------------------- secrets
     s.append(h2(9) + "<p>Potential credentials found by Gitleaks (commit history and current files) and Trivy's secret "
@@ -840,8 +866,27 @@ def render_audit_html(d: dict) -> str:
     else:
         s.append("<p>No active code issues.</p>")
 
-    # 12 ------------------------------------------------------------- references
-    s.append(h2(12))
+    # 12 ------------------------------------------------------------- web app issues (DAST)
+    web = d.get("web", [])
+    s.append(h2(12) + "<p>Problems found by the built-in web scan, which tests the running application through its "
+             "address (GET requests only, apps on this computer only). Page contents are not copied into this "
+             "report.</p>")
+    if web:
+        s.append(_table(["#", "Check", "Severity", "Issue", "Page", "Evidence", "Fix", "Status"],
+                        [[str(i), _e(r["rule_id"]) + (f"<br><span class='muted'>CWE-{_e(r['meta'].get('cwe'))}</span>"
+                                                      if r["meta"].get("cwe") else ""),
+                          _sev(r["severity"]), _e(r["title"]),
+                          f"<span class='mono'>{_e(r['meta'].get('url') or r['file_path'])}</span>"
+                          + (f"<br><span class='muted'>parameter {_e(r['meta'].get('parameter'))}</span>"
+                             if r["meta"].get("parameter") else ""),
+                          _e(r["meta"].get("evidence")), _e(r["remediation"]), _e(r["status"])]
+                         for i, r in enumerate(web, 1)], {0}))
+    else:
+        s.append("<p>No active web app issues" + ("" if any(r["scanner"] == "dast" for r in d["ok_runs"]) else
+                                                   " (no web address was tested for this project)") + ".</p>")
+
+    # 13 ------------------------------------------------------------- references
+    s.append(h2(13))
     if advis:
         items = []
         for k, a in advis.items():
@@ -870,6 +915,8 @@ def render_audit_html(d: dict) -> str:
         "RESOLVED; findings a later scan failed to cover become UNVERIFIED (never silently resolved).",
         "Ran Bandit on the project's Python files (installed libraries such as .venv are skipped); a repository's own "
         "<code>.bandit</code> file is ignored and code snippets are removed from the saved report.",
+        "Tested each configured local web address of the running app with the built-in DAST scan: GET requests only, "
+        "same-site links only (log-out / delete links skipped), response bodies never stored.",
         "Built this report from the database plus the raw JSON of the latest successful Trivy filesystem scan (CVSS, "
         "CWE, dates, references, package graph) and read-only git metadata.",
     ]
@@ -884,7 +931,8 @@ def render_audit_html(d: dict) -> str:
         "UNVERIFIED findings were seen before but not re-checked by a later successful scan; they are kept for review.",
         "Code analysis (SAST) covers Python only and finds known risky patterns; it cannot find logic flaws such as "
         "missing access checks. Lines marked <code># nosec</code> are not reported. Penetration testing of the running "
-        "application is not part of this report.",
+        "application is limited to the built-in web scan: it tests pages reachable without logging in, sends GET "
+        "requests only, and does not replace manual penetration testing.",
     ]
     if raw.error:
         limits.insert(0, f"Detailed advisory data is limited: {html.escape(raw.error)}.")
@@ -900,7 +948,7 @@ def render_audit_html(d: dict) -> str:
         raw_rows.append([f"#{r['id']}", _e(f"{r['scanner']} {r['scan_type']}"),
                          f"<span class='mono'>{_e(Path(r['report_path']).name if r['report_path'] else None)}</span>",
                          _e(f"{p.stat().st_size:,} bytes" if p else None), f"<span class='mono'>{_e(file_sha256(p), NA)}</span>"])
-    s.append(h2(13) + "<h3>Method</h3><ol>" + "".join(f"<li>{x}</li>" for x in steps) + "</ol><h3>Limitations</h3><ul>"
+    s.append(h2(14) + "<h3>Method</h3><ol>" + "".join(f"<li>{x}</li>" for x in steps) + "</ol><h3>Limitations</h3><ul>"
              + "".join(f"<li>{x}</li>" for x in limits) + "</ul><h3>Raw results (kept locally)</h3>"
              + (_table(["Run", "Scanner", "Report file", "Size", "SHA-256"], raw_rows) if raw_rows else "<p>None.</p>")
              + "<p class='muted'>To save as PDF: open this file in a browser and choose Print → Save as PDF.</p>"

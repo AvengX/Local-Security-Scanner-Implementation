@@ -48,6 +48,15 @@ sast:                         # code scan (static analysis) of your own Python c
   enabled: true
   skip_tests: []              # Bandit check IDs to skip, e.g. [B101] for assert statements
 
+dast:                         # web scan (dynamic testing) of your own RUNNING apps; built in, nothing to install
+  enabled: true
+  targets: []                 # only localhost / 127.0.0.1 / ::1 addresses are accepted, for example:
+  #  - repository: my-flask-app         # project that serves the app (name as shown on the Repositories page)
+  #    url: http://127.0.0.1:5000/      # the app must be running when the scan starts, otherwise it is skipped
+  max_pages: 30               # pages followed per address
+  max_requests: 400           # requests sent per address (GET only; forms that change data are never submitted)
+  request_timeout: 10         # seconds to wait for one response
+
 dashboard:
   host: 127.0.0.1             # loopback only; other values are rejected
   port: 8501

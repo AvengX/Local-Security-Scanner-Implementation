@@ -35,7 +35,7 @@ def repo_id(conn) -> int:
 
 def test_initialisation_idempotent(tmp_path: Path) -> None:
     c = init_db(tmp_path / "x.db")
-    assert get_setting(c, "schema_version") == "2"
+    assert get_setting(c, "schema_version") == "3"
     assert c.execute("PRAGMA foreign_keys").fetchone()[0] == 1
     tables = {r[0] for r in c.execute("SELECT name FROM sqlite_master WHERE type='table'")}
     assert {"repositories", "scan_runs", "findings", "settings", "finding_changes", "repo_locks"} <= tables

@@ -144,6 +144,7 @@ def cmd_status(cfg: AppConfig, args: argparse.Namespace) -> int:
     print(f"Repositories: {m['repositories']} (scanned: {m['repositories_scanned']})")
     print("Open findings: " + ", ".join(f"{k}={v}" for k, v in m["severity"].items()))
     print(f"Secrets: {m['category']['SECRET']}  Code issues: {m['category']['CODE']}  "
+          f"Web app issues: {m['category']['WEB']}  "
           f"Misconfigurations: {m['category']['MISCONFIGURATION']}  "
           f"Unverified: {m['unverified']}")
     print(f"Failed scans (latest per scanner): {m['failed_scans_latest']}  Total scans: {m['total_scans']}")
@@ -215,9 +216,11 @@ def cmd_update_databases(cfg: AppConfig, args: argparse.Namespace) -> int:
 
 
 def cmd_health(cfg: AppConfig, args: argparse.Namespace) -> int:
-    from engine.scanner_health import check_bandit, check_git, check_gitleaks, check_trivy, trivy_db_freshness
+    from engine.scanner_health import (check_bandit, check_dast, check_git, check_gitleaks, check_trivy,
+                                       trivy_db_freshness)
 
-    tools = [check_git(), check_trivy(cfg.trivy.executable), check_gitleaks(cfg.gitleaks.executable), check_bandit()]
+    tools = [check_git(), check_trivy(cfg.trivy.executable), check_gitleaks(cfg.gitleaks.executable), check_bandit(),
+             check_dast()]
     print(f"Python {sys.version.split()[0]}   config: {config_path()}")
     ok = True
     for t in tools:
@@ -231,6 +234,8 @@ def cmd_health(cfg: AppConfig, args: argparse.Namespace) -> int:
     fresh = trivy_db_freshness(cfg.trivy.cache_dir, cfg.scan.db_freshness_hours)
     print(f"  Vulnerability DB: {fresh.message}")
     print(f"  Offline mode: {cfg.scan.offline}   Roots: {cfg.repository_roots or '(none configured)'}")
+    if cfg.dast.enabled:
+        print(f"  Web scan (DAST) addresses: {', '.join(f'{t.repository} -> {t.url}' for t in cfg.dast.targets) or '(none added)'}")
     for d in cfg.app_dirs():
         print(f"  dir {d}  {'exists' if d.exists() else 'missing'}")
     return EXIT_OK if ok else EXIT_SCAN_FAILURES

@@ -1,13 +1,14 @@
 # Local Security Scanner
 
 A local-first, privacy-focused security monitoring platform for Windows that discovers every Git repository
-under folders you choose, scans them with **Trivy**, **Gitleaks** and **Bandit** (SAST), stores results and history in
+under folders you choose, scans them with **Trivy**, **Gitleaks**, **Bandit** (SAST) and a built-in **web scan** (DAST), stores results and history in
 **SQLite**, and presents them in a **Streamlit** dashboard bound to `127.0.0.1`. Source code, reports, the
 database and logs never leave your machine.
 
 ## How it works
 ```
 Your project folders ──► Trivy + Gitleaks + Bandit ──► SQLite database ──► Dashboard (http://127.0.0.1:8501)
+Your running local apps ──► Web scan (DAST) ──┘
         ▲                  (run_scan.py)        (data\ folder)              │
         └────────────────── buttons start scans in the background ──────────┘
 ```
@@ -17,10 +18,14 @@ Your project folders ──► Trivy + Gitleaks + Bandit ──► SQLite databa
    **Gitleaks** finds passwords and keys in current files *and* in old commits.
    **Bandit** (SAST) reads your own Python code and finds risky patterns such as SQL built from strings,
    `shell=True`, `pickle.loads` or Flask `debug=True`. It never runs the code.
+   **Web scan (DAST)** tests your apps *while they run*, through their local address (for example
+   `http://127.0.0.1:5000/`): missing security headers, unsafe cookies, exposed `.env`/`.git` files, debug consoles,
+   stack traces, directory listing, open CORS, reflected XSS, SQL injection, open redirects and path traversal.
 4. Results go into a local SQLite database, compared with the previous scan: new, still open, fixed, or unverified.
 5. The **dashboard** reads that database and shows it. It can also start scans in the background.
 
 Nothing is uploaded. Only Trivy downloads its vulnerability list from the internet, and offline mode turns that off.
+The web scan only talks to apps on this computer (localhost / 127.0.0.1 / ::1).
 The scanner never changes your projects.
 
 ## Tech stack
@@ -30,6 +35,7 @@ The scanner never changes your projects.
 | Vulnerability scanner | **Trivy** 0.76 (Aqua Security) | Vulnerable libraries, unsafe Docker/Kubernetes/Terraform settings, secrets in files |
 | Secret scanner | **Gitleaks** 8.30 | Passwords and keys in current files and in Git history |
 | Code scanner (SAST) | **Bandit** 1.9 (Python package, offline) | Security bugs in your own Python code |
+| Web scanner (DAST) | Built in (Python standard library `urllib`, `html.parser`) | Testing your running local web apps through their address |
 | Version control | **Git** | Finding repositories, branch/commit details, history scans |
 | Database | **SQLite** (Python `sqlite3`) | Repositories, scan runs, findings and history, stored locally in `data\` |
 | Dashboard | **Streamlit** 1.67 | Web UI on `127.0.0.1:8501` (tables, filters, buttons that start background scans) |
@@ -75,7 +81,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\install.ps1
 **4. Download the vulnerability database** (needs internet, about 80 MB):
 ```powershell
 .\.venv\Scripts\python.exe run_scan.py update-databases
-.\.venv\Scripts\python.exe run_scan.py health          # git, trivy, gitleaks and bandit should all say OK
+.\.venv\Scripts\python.exe run_scan.py health          # git, trivy, gitleaks, bandit and dast should all say OK
 ```
 
 **5. Start the dashboard:**
@@ -95,7 +101,7 @@ repository_roots: ['C:\Users\you\source\repos', 'D:\Projects']
 
 **8. Optional: prove it works on this laptop.** Open **VAPT Lab → Run VAPT test**, or run:
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\run_vapt_test.ps1   # should report 55/55 PASS
+powershell -ExecutionPolicy Bypass -File .\scripts\run_vapt_test.ps1   # should report 73/73 PASS
 ```
 
 **Every day after that:** run `.\scripts\start.ps1` and use the dashboard.
@@ -125,6 +131,7 @@ Every page answers one question. Full guide: [docs/UI_GUIDE.md](docs/UI_GUIDE.md
 | Vulnerabilities | Which libraries I use have known security holes? |
 | Secrets | Where did passwords or API keys end up in my code? |
 | Code issues | Which lines of our own code are written in a risky way? (SAST) |
+| Web app issues | What is wrong with our apps when they run? (DAST) |
 | Misconfigurations | Which Docker or cloud settings are unsafe? (shown only when a project has such files) |
 | Repositories | Which projects are watched, and how do I scan them? |
 | Scan History | What happened every time a scan ran? |
@@ -133,7 +140,8 @@ Every page answers one question. Full guide: [docs/UI_GUIDE.md](docs/UI_GUIDE.md
 | Settings | How do I change what is scanned, and how? |
 
 **On every page**
-* **Sidebar → System health:** Trivy, Gitleaks, Bandit (code scan), vulnerability DB and results database.
+* **Sidebar → System health:** Trivy, Gitleaks, Bandit (code scan), web scan (number of app addresses),
+  vulnerability DB and results database.
   Green = working, amber = needs attention (for example an old vulnerability list), red = not working (missing or blocked by Windows).
   Running scans are listed underneath.
 * **Top bar:** page name, when the last scan finished, scanner status, vulnerability-list age, and **Refresh**.
@@ -142,7 +150,8 @@ Every page answers one question. Full guide: [docs/UI_GUIDE.md](docs/UI_GUIDE.md
 * **Search box:** type a CVE, package or file name to jump to matching findings.
 * **Security posture:** one headline based on the worst open problem.
   *Critical exposure* (red) → *Elevated risk* (orange) → *Guarded* → *No open findings* (green).
-* **Cards:** repositories, scanned, critical, high, exposed secrets, code issues, misconfigurations, failed scans.
+* **Cards:** repositories, scanned, critical, high, exposed secrets, code issues, web app issues, misconfigurations,
+  failed scans.
 * **Problems by project:** a plain table — vulnerable libraries, leaked secrets and unsafe settings per project,
   with the most serious level. (No charts: every number is shown as text.)
 * The misconfigurations card and the unsafe-settings column are hidden while no project has anything for them
@@ -174,6 +183,23 @@ and similar), with the **installed** version and the **version that fixes it**.
 * A real false positive can be marked in the code with `# nosec B608` plus a short reason.
 * Only Python is checked today; JavaScript and other languages are not.
 
+**Web app issues (DAST)**: problems found by testing your apps while they run.
+* **Setup:** Settings → *Web scan (DAST)* → add a row: the project and the address where its app runs (for example
+  `http://127.0.0.1:5000/`). Start the app, then scan the project. If the app is not running, the web scan is
+  *skipped* and earlier web issues are kept as *Unverified* (never marked fixed).
+* The scan visits the start page, follows same-site links (up to 30 pages / 400 requests by default), and checks:
+  security headers (CSP, clickjacking, nosniff, HSTS), cookie flags, version disclosure, exposed files (`.env`,
+  `.git`, database files, SQL dumps), Flask/Werkzeug debugger and Django debug pages, stack traces, directory
+  listing, CORS, TRACE, and — on every URL parameter and GET form — reflected XSS, SQL errors, open redirects and
+  path traversal.
+* **Safe by design:** only addresses on this computer are accepted; only GET requests are sent (POST forms are never
+  submitted, so no data is changed); links such as *log out* or *delete* are never followed; redirects never leave
+  the app; no proxy is used; page contents are never stored (an exposed `.env` is recorded by name and size only).
+* Each row shows the check ID (for example **DAST-XSS**), severity, page and parameter, and the app address. Click it
+  for the evidence, the fix and the CWE weakness type.
+* Limits: pages behind a login are not tested, JavaScript-only apps (for example Streamlit) get the header, cookie
+  and file checks but have few links to follow, and it does not replace a manual penetration test.
+
 **Misconfigurations**: unsafe settings in Dockerfiles, Kubernetes or Terraform, for example "container runs as root".
 Click a row for the fix. The page only appears in the sidebar when a monitored project contains a Dockerfile,
 docker-compose, Kubernetes, Helm or Terraform file, or has an open misconfiguration. Scans keep checking for
@@ -200,16 +226,16 @@ instead of claiming a clean result. Misconfigurations lists the configuration fi
 * Choose *all projects* or *one project*, then download **CSV**, **JSON**, **Markdown** or **HTML**.
 * **Save all formats to disk** writes them to `reports\exports`.
 * **Detailed audit report** (one project): click **Generate audit report** for a full VAPT-style report, then
-  download it or open the saved file and choose **Print → Save as PDF**. It has 12 numbered sections: repository and
+  download it or open the saved file and choose **Print → Save as PDF**. It has 14 numbered sections: repository and
   scan metadata (commit, tool versions and binary SHA-256, exact commands, exit codes), an executive summary written
   from the data, deduplicated counts, severity distribution, every vulnerability with CVSS / CWE / fixed versions /
   dependency path, direct vs transitive, remediation commands, secrets (never their values), misconfigurations,
-  references, and methodology with limitations and raw-report checksums.
-* The original Trivy and Gitleaks output of each scan is also downloadable.
+  code issues, web app issues, references, and methodology with limitations and raw-report checksums.
+* The original Trivy, Gitleaks, Bandit and web-scan output of each scan is also downloadable.
 
 **VAPT Lab**: a self-test for the scanner.
-* **Run VAPT test** builds 4 practice projects with planted problems (old libraries, fake keys, unsafe settings, insecure Python code, plus one clean project), scans them, and checks 55 expectations.
-* Shows the result (for example 55/55), expected versus actual for every check, and past runs.
+* **Run VAPT test** builds 4 practice projects with planted problems (old libraries, fake keys, unsafe settings, insecure Python code, plus one clean project) and starts 2 practice web apps on 127.0.0.1 (one unsafe, one done right), scans them, and checks 73 expectations.
+* Shows the result (for example 73/73), expected versus actual for every check, and past runs.
 * It never touches your real projects.
 
 **Settings**
@@ -237,10 +263,11 @@ download a summary from **Reports** if someone else needs it.
 | Discovery | Recursive, multiple roots, `.git` dirs and `.git` files (worktrees/submodules), nested repos, exclusions, no symlink/junction following, permission errors reported, moved/deleted detection, branch + commit |
 | Trivy | `fs` (vuln, misconfig, secret, license), `config`, `image`, CycloneDX SBOM, severity filter, offline flags, DB update, version-aware flags |
 | Gitleaks | `git` (history, `--log-opts`) and `dir` (working tree) modes, custom config/allowlists, `--redact` |
+| DAST (built in) | Safe dynamic testing of running local web apps: loopback-only (checked in config and on every request), GET-only, destructive links skipped, request/page/time limits, earlier findings re-tested first, app-down = skipped + unverified, response bodies never stored |
 | SAST (Bandit) | Static analysis of Python code, offline; own `--ini` (repository `.bandit` ignored), skip folders, `sast.skip_tests`, code snippets and password values removed from stored results and saved reports |
 | Orchestration | scan-all / scan-repo, bounded concurrency, per-repo + job locks, timeouts, Ctrl+C cancellation, per-scan isolation, batch summaries |
 | Storage | SQLite with FKs, WAL, transactions, indexes, migrations, duplicate prevention, retention |
-| Dashboard | Dark security-operations UI: Overview (posture, metrics, problems-by-project table, recommended actions, health), Security Findings, Vulnerabilities, Secrets, Code issues, Misconfigurations, Repositories, Scan History, Reports, VAPT Lab, Settings — sidebar health panel, global search, finding history, guided empty/error states. See [docs/UI_GUIDE.md](docs/UI_GUIDE.md) |
+| Dashboard | Dark security-operations UI: Overview (posture, metrics, problems-by-project table, recommended actions, health), Security Findings, Vulnerabilities, Secrets, Code issues, Web app issues, Misconfigurations, Repositories, Scan History, Reports, VAPT Lab, Settings — sidebar health panel, global search, finding history, guided empty/error states. See [docs/UI_GUIDE.md](docs/UI_GUIDE.md) |
 | Reports | Raw JSON per scan, CSV, consolidated JSON, Markdown/HTML summary, per-repository reports, detailed VAPT-style audit report (HTML → PDF) |
 | Automation | Windows Task Scheduler (daily/weekly) with explicit confirmation |
 | Offline | Cached DB only, visible freshness/staleness, DB-missing detection |
@@ -248,11 +275,11 @@ download a summary from **Reports** if someone else needs it.
 ## 3. Architecture
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 ```
-Discovery → Orchestrator → (Trivy | Gitleaks | Bandit) → JSON parser/normaliser → Comparison → SQLite → Analytics → Dashboard → Exports
+Discovery → Orchestrator → (Trivy | Gitleaks | Bandit | DAST) → JSON parser/normaliser → Comparison → SQLite → Analytics → Dashboard → Exports
 ```
 
 ## 4. Prerequisites
-Windows 10/11, PowerShell 5.1+, Python 3.12+ (tested 3.14.7), Git, Trivy (tested 0.76.2), Gitleaks (tested 8.30.1). Bandit 1.9.4 is installed from requirements.txt.
+Windows 10/11, PowerShell 5.1+, Python 3.12+ (tested 3.14.7), Git, Trivy (tested 0.76.2), Gitleaks (tested 8.30.1). Bandit 1.9.4 is installed from requirements.txt. The web scan (DAST) is built in.
 
 ## 5. Windows installation
 ```powershell
@@ -277,7 +304,7 @@ py -3 -m venv .venv
 ## 9. Configuration
 `config.yaml` (created from `config.example.yaml`, never overwritten by scripts). Key settings:
 `repository_roots`, `excluded_dirs`, `scan.timeout_seconds`, `scan.concurrency`, `scan.severities`,
-`scan.offline`, `scan.db_freshness_hours`, `scan.retention_days`, `trivy.*`, `gitleaks.*`, `sast.*`, `paths.*`.
+`scan.offline`, `scan.db_freshness_hours`, `scan.retention_days`, `trivy.*`, `gitleaks.*`, `sast.*`, `dast.*`, `paths.*`.
 All values are validated (Pydantic); invalid configs are rejected with a clear message. The dashboard
 Settings page edits the same file. Use `--config` or `LSS_CONFIG` for alternative configs.
 For production, point `paths.*` outside any scanned root (e.g. `%LOCALAPPDATA%\LocalSecurityScanner\data`);
@@ -342,7 +369,8 @@ Downloads are restricted to files registered in the DB **and** located inside `r
 ## 18. Security limitations
 See [docs/SECURITY.md](docs/SECURITY.md). In short: detection is limited to Trivy/Gitleaks/Bandit rules and DB
 freshness; SAST covers Python only and finds known risky patterns, not logic flaws such as missing access checks;
-no penetration testing of running systems; raw Trivy reports may contain masked code context — keep `reports/` private; no app-level auth
+the web scan (DAST) tests local apps without logging in and with GET requests only, so it does not
+replace a manual penetration test; raw Trivy reports may contain masked code context — keep `reports/` private; no app-level auth
 (loopback-only); OS application-control policies may block scanners and are reported, not bypassed.
 
 ## 19. Testing
@@ -358,7 +386,7 @@ randomly generated fake tokens (never real credentials) and are skipped if a too
 .\scripts\run_vapt_test.ps1 -Dashboard
 ```
 Builds a lab of intentionally vulnerable repositories, scans it with the real application and verifies
-55 PASS/FAIL checks (CVEs, IaC misconfigurations, secrets incl. Git history, SAST code issues, false positives, remediation,
+73 PASS/FAIL checks (CVEs, IaC misconfigurations, secrets incl. Git history, SAST code issues, DAST web issues, false positives, remediation,
 offline mode, reports, secret-leak audit). Scope and details: [docs/VAPT_TEST.md](docs/VAPT_TEST.md).
 
 ### Sharing with someone else

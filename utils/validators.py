@@ -5,9 +5,10 @@ from __future__ import annotations
 import ipaddress
 import re
 from pathlib import Path
+from urllib.parse import urlsplit, urlunsplit
 
 SEVERITIES: tuple[str, ...] = ("CRITICAL", "HIGH", "MEDIUM", "LOW", "UNKNOWN")
-CATEGORIES: tuple[str, ...] = ("VULNERABILITY", "SECRET", "MISCONFIGURATION", "CODE", "LICENSE", "OTHER")
+CATEGORIES: tuple[str, ...] = ("VULNERABILITY", "SECRET", "MISCONFIGURATION", "CODE", "WEB", "LICENSE", "OTHER")
 TRIVY_SCANNERS: dict[str, str] = {
     "vuln": "VULNERABILITY",
     "misconfig": "MISCONFIGURATION",
@@ -68,3 +69,36 @@ def validate_schedule_time(value: str) -> str:
     if not _SCHEDULE_TIME.match(value):
         raise ValueError("Time must be HH:MM in 24-hour format")
     return value
+
+
+def is_loopback_host(host: str | None) -> bool:
+    """localhost, 127.0.0.0/8 or ::1. Other names are refused (they could resolve anywhere)."""
+    if not host:
+        return False
+    if host.lower() == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host.strip("[]")).is_loopback
+    except ValueError:
+        return False
+
+
+def validate_dast_url(url: str) -> str:
+    """A web address the DAST scan may test: http(s), loopback host only, no credentials or fragment."""
+    raw = (url or "").strip()
+    parts = urlsplit(raw)
+    if parts.scheme not in ("http", "https"):
+        raise ValueError(f"Web scan address must start with http:// or https://: {raw!r}")
+    if parts.username or parts.password:
+        raise ValueError("Web scan address must not contain a user name or password")
+    try:
+        port = parts.port
+    except ValueError as exc:
+        raise ValueError(f"Invalid port in web scan address: {raw!r}") from exc
+    if not is_loopback_host(parts.hostname):
+        raise ValueError(f"Web scan is limited to apps on this computer (localhost, 127.0.0.1 or ::1): {raw!r}")
+    host = parts.hostname.lower()
+    if ":" in host:
+        host = f"[{host}]"
+    netloc = host + (f":{port}" if port else "")
+    return urlunsplit((parts.scheme, netloc, parts.path or "/", parts.query, ""))

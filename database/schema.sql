@@ -1,4 +1,4 @@
--- Local Security Scanner schema (version 2). Applied idempotently.
+-- Local Security Scanner schema (version 3). Applied idempotently.
 PRAGMA foreign_keys = ON;
 
 CREATE TABLE IF NOT EXISTS repositories (
@@ -55,7 +55,7 @@ CREATE TABLE IF NOT EXISTS findings (
     scanner           TEXT    NOT NULL,
     scan_type         TEXT    NOT NULL,
     scan_target       TEXT    NOT NULL DEFAULT '.',
-    category          TEXT    NOT NULL CHECK (category IN ('VULNERABILITY','SECRET','MISCONFIGURATION','CODE','LICENSE','OTHER')),
+    category          TEXT    NOT NULL CHECK (category IN ('VULNERABILITY','SECRET','MISCONFIGURATION','CODE','WEB','LICENSE','OTHER')),
     severity          TEXT    NOT NULL CHECK (severity IN ('CRITICAL','HIGH','MEDIUM','LOW','UNKNOWN')),
     vulnerability_id  TEXT,
     rule_id           TEXT,

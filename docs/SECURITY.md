@@ -44,6 +44,9 @@ weaken Git's ownership checks itself.
 
 ## Raw report sensitivity
 * Gitleaks reports are written with `--redact` (secret values replaced by `REDACTED`).
+* The web scan (DAST) contacts loopback addresses only (validated in config and before every request, no proxy,
+  no off-site redirects), sends GET requests only (plus one TRACE probe), never submits POST forms, skips links
+  such as logout/delete, and never stores response bodies — an exposed `.env` is recorded by path and size only.
 * Bandit reports are rewritten after parsing without code snippets, and hardcoded-password messages are
   replaced by a fixed text; a failed, timed-out or cancelled Bandit run leaves no report behind.
 * Trivy masks secret matches with asterisks in its JSON, but surrounding code lines are included. Treat
@@ -54,7 +57,8 @@ weaken Git's ownership checks itself.
 * Detection quality is bounded by Trivy/Gitleaks/Bandit rules and the freshness of Trivy's DB.
 * SAST covers Python only and finds known risky patterns; it cannot find logic flaws (for example missing
   authorisation checks). Lines marked `# nosec` are not reported. There is no penetration testing of
-  running applications.
+  running applications beyond the built-in web scan, which does not log in, sends GET requests only and is not
+  a substitute for a manual penetration test.
 * Windows Smart App Control / WDAC can block unsigned scanner binaries or Python extension DLLs; the app
   detects and reports this but does not bypass it.
 * A user with access to the Windows account can read the database and reports; there is no app-level
