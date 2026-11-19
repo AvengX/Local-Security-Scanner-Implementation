@@ -511,6 +511,23 @@ class Vapt:
                                 "what was tested)",
                    code == 0 and all(x in doc for x in ("What to fix first", "What was tested", "risk",
                                                         "does not cover")), new[-1].name if new else out[-200:])
+        code, out = self.cli("summary", "--pdf")
+        pdfs = sorted((self.app / "reports" / "exports").glob("*_management_summary.pdf"))
+        self.r.add("7 Reports", "Management summary also written as a real PDF (Edge / Chrome, nothing installed)",
+                   code == 0 and bool(pdfs) and pdfs[-1].read_bytes()[:5] == b"%PDF-",
+                   f"{pdfs[-1].name} ({pdfs[-1].stat().st_size} bytes)" if pdfs else out[-200:])
+        code, out = self.cli("sarif", "--name", "vuln-python-app")
+        sarif = self.app / "reports" / "exports" / "vuln-python-app.sarif"
+        ok, detail = False, out[-200:]
+        if code == 0 and sarif.is_file():
+            data = json.loads(sarif.read_text(encoding="utf-8"))
+            uris = [res["locations"][0]["physicalLocation"]["artifactLocation"]["uri"]
+                    for run in data["runs"] for res in run["results"]]
+            tools = {run["tool"]["driver"]["name"] for run in data["runs"]}
+            ok = (data["version"] == "2.1.0" and len(uris) > 10 and {"Trivy", "Gitleaks", "Bandit"} <= tools
+                  and not any(u.startswith(("/", "C:", "D:")) or "\\" in u for u in uris))
+            detail = f"{len(uris)} results from {len(tools)} tools, all paths repository-relative"
+        self.r.add("7 Reports", "SARIF 2.1.0 export for GitHub / VS Code (relative paths, several tools)", ok, detail)
         raw = list((self.app / "reports").rglob("*_run*.json"))
         self.r.add("7 Reports", "Raw Trivy, Gitleaks, Bandit, code-scan and DAST JSON reports kept locally",
                    any("_trivy_" in p.name for p in raw) and any("_gitleaks_" in p.name for p in raw)

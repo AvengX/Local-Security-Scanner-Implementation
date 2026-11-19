@@ -316,8 +316,8 @@ def test_folder_picker_results(monkeypatch) -> None:
     def fake(out: str, code: int = 0, err: str = ""):
         return lambda *a, **k: subprocess.CompletedProcess(a, code, out, err)
 
-    monkeypatch.setattr(fp.subprocess, "run", fake("D:/STUDY/Projects"))
-    assert fp.pick_folder() == str(Path("D:/STUDY/Projects"))  # Tk's forward slashes become a Windows path
+    monkeypatch.setattr(fp.subprocess, "run", fake("D:/Work/Projects"))
+    assert fp.pick_folder() == str(Path("D:/Work/Projects"))  # Tk's forward slashes become a Windows path
     monkeypatch.setattr(fp.subprocess, "run", fake(""))
     assert fp.pick_folder() is None  # cancelled
     monkeypatch.setattr(fp.subprocess, "run", fake("", 1, "TclError: no display"))

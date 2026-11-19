@@ -45,7 +45,7 @@ Fake credentials are generated randomly on each run, belong to no account, and a
 `vapt_lab\lab_secrets.json` only so the leak audit can search for them. Dependencies are never installed
 or executed; IaC is never deployed.
 
-## Checks (104)
+## Checks (106)
 1. **Health**: Trivy, Gitleaks and Bandit runnable, code scan for other languages and web scan built in, Trivy DB
    cached and fresh.
 2. **Discovery**: all 4 repositories found.
@@ -84,7 +84,7 @@ or executed; IaC is never deployed.
    app's exposed `.env` and the test account's sign-in password) anywhere in the database, raw reports, exports or logs.
 
 ## Reference run (2026-11-19, Trivy 0.76.2, Gitleaks 8.30.1, Bandit 1.9.4, code scan 1.0, DAST 1.1, Windows 11)
-104/104 PASS (incl. API testing, alerts, secret guard, triage, installed versions and auto-start), including 7 code issues found by the built-in check in other languages and 16 web app issues
+106/106 PASS (incl. PDF/SARIF export, API testing, alerts, secret guard, triage, installed versions and auto-start), including 7 code issues found by the built-in check in other languages and 16 web app issues
 on the unsafe lab app (one of them only reachable after signing in); 0 on the clean app.
 
 Earlier reference run (2026-11-18, DAST 1.0): 73/73 PASS.
@@ -115,3 +115,7 @@ web address allows POST only to `/api/echo`. The scan must find SQL injection at
 documented as protected that answers without a login (`GET /api/admin/stats`), reflected XSS and a stack trace
 through `POST /api/echo` JSON fields, and the public Swagger UI at `/docs` — and must never POST to
 `/api/delete-everything` (documented, not allowed; counted by the lab app).
+
+**PDF and SARIF (1.2.0):** `summary --pdf` must write a real PDF (created with the Edge / Chrome already installed),
+and `sarif --name vuln-python-app` must write a SARIF 2.1.0 file with results from Trivy, Gitleaks and Bandit whose
+locations are all repository-relative. The leak audit also covers these files.

@@ -1,5 +1,7 @@
 # Local Security Scanner
 
+**Version 1.2.0** — see [CHANGELOG.md](CHANGELOG.md) for what is new.
+
 A local-first, privacy-focused security monitoring platform for Windows that discovers every Git repository
 under folders you choose, scans them with **Trivy**, **Gitleaks**, **Bandit** (SAST) and a built-in **web scan** (DAST), stores results and history in
 **SQLite**, and presents them in a **Streamlit** dashboard bound to `127.0.0.1`. Source code, reports, the
@@ -45,7 +47,7 @@ The scanner never changes your projects — the only exception is the optional s
 | Dashboard | **Streamlit** 1.67 | Web UI on `127.0.0.1:8501` (tables, filters, buttons that start background scans) |
 | Data handling | **pandas** 2.3, **NumPy** 2.4, **PyArrow** 22 | Tables and filtering in the dashboard |
 | Validation and config | **Pydantic** 2.14, **PyYAML** 6.0 | Checking `config\config.yaml` and settings |
-| Reports | HTML + CSS (print-ready), CSV, JSON, Markdown | Audit report (Print → Save as PDF), exports |
+| Reports | HTML + CSS (print-ready), PDF (via Edge/Chrome already installed), SARIF 2.1.0, CSV, JSON, Markdown | Management summary, audit report, GitHub / VS Code export |
 | Testing | **pytest** 9.2, Streamlit AppTest | Unit and dashboard tests; VAPT acceptance test (`vapt\run_vapt_test.py`) |
 | Automation | **PowerShell** scripts, Windows Task Scheduler | Install, start, scheduled scans (`scripts\`) |
 | Platform | Windows 10/11 (Win32 API via `ctypes`) | Process checks for running scans and tests |
@@ -105,7 +107,7 @@ repository_roots: ['C:\Users\you\source\repos', 'D:\Projects']
 
 **8. Optional: prove it works on this laptop.** Open **VAPT Lab → Run VAPT test**, or run:
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\run_vapt_test.ps1   # should report 104/104 PASS
+powershell -ExecutionPolicy Bypass -File .\scripts\run_vapt_test.ps1   # should report 106/106 PASS
 ```
 
 **Every day after that:** run `.\scripts\start.ps1` and use the dashboard.
@@ -312,20 +314,27 @@ instead of claiming a clean result. Misconfigurations lists the configuration fi
 * **Management summary** (all projects or one): click **Generate summary** for a plain-language report a manager can
   read: overall risk level, a table per project, the ten things to fix first written as actions ("Update the
   library jinja2 from 2.10 to 3.1.5", "Turn debug off"), what was and was not tested, progress over the last 30 days
-  and next steps. Print → Save as PDF for a PDF. CLI: `python run_scan.py summary`.
+  and next steps. **Create PDF** makes a real PDF file (with the Microsoft Edge or Chrome already on the computer —
+  nothing to install). CLI: `python run_scan.py summary --pdf`.
 * Choose *all projects* or *one project*, then download **CSV**, **JSON**, **Markdown** or **HTML**.
 * **Save all formats to disk** writes them to `reports\exports`.
 * **Detailed audit report** (one project): click **Generate audit report** for a full VAPT-style report, then
-  download it or open the saved file and choose **Print → Save as PDF**. It has 14 numbered sections: repository and
+  download it as HTML, or press **Create PDF** for a PDF (CLI: `python run_scan.py audit --name X --pdf`). It has 14
+  numbered sections: repository and
   scan metadata (commit, tool versions and binary SHA-256, exact commands, exit codes), an executive summary written
   from the data, deduplicated counts, severity distribution, every vulnerability with CVSS / CWE / fixed versions /
   dependency path, direct vs transitive, remediation commands, secrets (never their values), misconfigurations,
   code issues, web app issues, references, and methodology with limitations and raw-report checksums.
+* **SARIF** (one project): **Download SARIF** gives a SARIF 2.1.0 file with the open, undecided findings —
+  upload it to GitHub (*Security → Code scanning*, or the `github/codeql-action/upload-sarif` action) to see each
+  issue on its line of code, or open it in VS Code with the *SARIF Viewer* extension. Paths are relative to the
+  repository, rules carry GitHub's `security-severity`, and secret values are never included. CLI:
+  `python run_scan.py sarif --name X`.
 * The original Trivy, Gitleaks, Bandit, code-scan and web-scan output of each scan is also downloadable.
 
 **VAPT Lab**: a self-test for the scanner.
-* **Run VAPT test** builds 4 practice projects with planted problems (old libraries, fake keys, unsafe settings, insecure Python, JavaScript and template code, plus one clean project) and starts 2 practice web apps on 127.0.0.1 (one unsafe with a members area behind a login, one done right), scans them, and checks 104 expectations — including that every finding has a plain-language explanation and that triage decisions survive rescans.
-* Shows the result (for example 104/104), expected versus actual for every check, and past runs.
+* **Run VAPT test** builds 4 practice projects with planted problems (old libraries, fake keys, unsafe settings, insecure Python, JavaScript and template code, plus one clean project) and starts 2 practice web apps on 127.0.0.1 (one unsafe with a members area behind a login, one done right), scans them, and checks 106 expectations — including that every finding has a plain-language explanation and that triage decisions survive rescans.
+* Shows the result (for example 106/106), expected versus actual for every check, and past runs.
 * It never touches your real projects.
 
 **Settings**
@@ -443,9 +452,11 @@ Pages and states are described in [docs/UI_GUIDE.md](docs/UI_GUIDE.md). The late
 
 ## 16. Reports
 Raw: `reports/<Repo>_<id>/*.json`. Exports: `reports/exports/` via `run_scan.py report` or the Reports page.
-Detailed audit report for one repository (print-ready HTML; Print → Save as PDF):
+Detailed audit report, management summary (add `--pdf` for a PDF) and SARIF for GitHub / VS Code:
 ```powershell
-.\.venv\Scripts\python.exe run_scan.py audit --name LOAN_SYSTEM
+.\.venv\Scripts\python.exe run_scan.py audit --name my-project --pdf
+.\.venv\Scripts\python.exe run_scan.py summary --pdf
+.\.venv\Scripts\python.exe run_scan.py sarif --name my-project
 ```
 It is built from the database, the raw JSON of the latest successful `trivy fs` run and read-only git metadata.
 Dependency paths need a scan made with this version (Trivy runs with `--list-all-pkgs`); older scans say so.
@@ -484,7 +495,7 @@ randomly generated fake tokens (never real credentials) and are skipped if a too
 .\scripts\run_vapt_test.ps1 -Dashboard
 ```
 Builds a lab of intentionally vulnerable repositories, scans it with the real application and verifies
-104 PASS/FAIL checks (API testing, alerts, secret guard, triage decisions, installed versions, auto-start, CVEs, IaC misconfigurations, secrets incl. Git history, SAST code issues in Python and other languages, DAST web issues incl. behind a login, plain-language explanations, false positives, remediation,
+106 PASS/FAIL checks (PDF and SARIF export, API testing, alerts, secret guard, triage decisions, installed versions, auto-start, CVEs, IaC misconfigurations, secrets incl. Git history, SAST code issues in Python and other languages, DAST web issues incl. behind a login, plain-language explanations, false positives, remediation,
 offline mode, reports, secret-leak audit). Scope and details: [docs/VAPT_TEST.md](docs/VAPT_TEST.md).
 
 ### Sharing with someone else

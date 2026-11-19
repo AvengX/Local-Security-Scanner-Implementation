@@ -198,8 +198,7 @@ def cmd_audit(cfg: AppConfig, args: argparse.Namespace) -> int:
     path = save_audit(conn, cfg, matches[0]["id"])
     conn.close()
     print(f"Wrote {path}")
-    print("Open it in a browser and choose Print -> Save as PDF for a PDF copy.")
-    return EXIT_OK
+    return _maybe_pdf(path, args.pdf)
 
 
 def cmd_summary(cfg: AppConfig, args: argparse.Namespace) -> int:
@@ -222,7 +221,42 @@ def cmd_summary(cfg: AppConfig, args: argparse.Namespace) -> int:
     path = write_export(cfg.reports_dir, name, doc)
     print(f"{data['risk'][0]}: {data['risk'][2]}")
     print(f"Wrote {path}")
-    print("Open it in a browser and choose Print -> Save as PDF for a PDF copy.")
+    return _maybe_pdf(path, args.pdf)
+
+
+def _maybe_pdf(path: Path, wanted: bool) -> int:
+    if not wanted:
+        print("Add --pdf to also create a PDF (uses Microsoft Edge / Chrome already on this computer).")
+        return EXIT_OK
+    from services.pdf_export import PdfError, html_to_pdf
+
+    try:
+        print(f"Wrote {html_to_pdf(path)}")
+    except PdfError as exc:
+        print(f"PDF not created: {exc}")
+        return EXIT_SCAN_FAILURES
+    return EXIT_OK
+
+
+def cmd_sarif(cfg: AppConfig, args: argparse.Namespace) -> int:
+    """Write a SARIF 2.1.0 file (GitHub code scanning / VS Code) with the open findings of one repository."""
+    from database import repositories as dao
+    from database.db import init_db
+    from services.sarif_export import sarif_bytes
+
+    conn = init_db(cfg.db_path)
+    matches = dao.find_repositories(conn, name=args.name, path=args.path)
+    if len(matches) != 1:
+        print(f"Repository not found or ambiguous ({len(matches)} matches). Use --name or --path.")
+        conn.close()
+        return EXIT_USAGE
+    data = sarif_bytes(conn, matches[0]["id"])
+    conn.close()
+    out = Path(args.out) if args.out else cfg.reports_dir / "exports" / f"{matches[0]['name']}.sarif"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_bytes(data)
+    runs = json.loads(data)["runs"]
+    print(f"Wrote {out} ({sum(len(r['results']) for r in runs)} result(s) from {len(runs)} tool(s))")
     return EXIT_OK
 
 
@@ -398,7 +432,7 @@ def cmd_prune(cfg: AppConfig, args: argparse.Namespace) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(prog="run_scan.py", description="Local Security Scanner CLI (Trivy + Gitleaks)")
+    p = argparse.ArgumentParser(prog="run_scan.py", description="Local Security Scanner CLI - libraries, secrets, code, settings and running web apps (all local)")
     p.add_argument("--config", help="Path to config.yaml (default: project config.yaml or LSS_CONFIG)")
     sub = p.add_subparsers(dest="command", required=True)
 
@@ -428,6 +462,12 @@ def build_parser() -> argparse.ArgumentParser:
     ag = au.add_mutually_exclusive_group(required=True)
     ag.add_argument("--name", help="Repository name (as discovered)")
     ag.add_argument("--path", help="Absolute repository path")
+    au.add_argument("--pdf", action="store_true", help="Also create a PDF (Edge / Chrome, nothing to install)")
+    sf = sub.add_parser("sarif", help="Write a SARIF file (GitHub code scanning / VS Code) for one repository")
+    sg = sf.add_mutually_exclusive_group(required=True)
+    sg.add_argument("--name")
+    sg.add_argument("--path")
+    sf.add_argument("--out", help="Output file (default reports/exports/<name>.sarif)")
 
     gd = sub.add_parser("guard", help="Pre-commit secret guard: install / remove / status")
     gd.add_argument("action", choices=["install", "remove", "status"])
@@ -437,6 +477,7 @@ def build_parser() -> argparse.ArgumentParser:
     sm = sub.add_parser("summary", help="Write the plain-language management summary (HTML) for all or one project")
     sm.add_argument("--name")
     sm.add_argument("--path")
+    sm.add_argument("--pdf", action="store_true", help="Also create a PDF (Edge / Chrome, nothing to install)")
     u = sub.add_parser("update-databases", help="Download/refresh Trivy vulnerability databases (online)")
     u.add_argument("--force", action="store_true", help="Update even if offline mode is enabled")
     sub.add_parser("health", help="Check tools, versions and DB freshness")
@@ -458,7 +499,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 COMMANDS = {
     "init": cmd_init, "discover": cmd_discover, "scan-all": cmd_scan_all, "scan-repo": cmd_scan_repo,
-    "status": cmd_status, "report": cmd_report, "audit": cmd_audit, "summary": cmd_summary, "test-alert": cmd_test_alert, "guard": cmd_guard, "update-databases": cmd_update_databases,
+    "status": cmd_status, "report": cmd_report, "audit": cmd_audit, "summary": cmd_summary, "sarif": cmd_sarif, "test-alert": cmd_test_alert, "guard": cmd_guard, "update-databases": cmd_update_databases,
     "health": cmd_health, "schedule": cmd_schedule, "unschedule": cmd_unschedule, "prune": cmd_prune,
 }
 

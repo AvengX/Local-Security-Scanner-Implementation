@@ -193,3 +193,13 @@ Repository Discovery Engine  (engine/repository_discovery.py)
   by T and not decided by T. Points are end-of-day (≤ 31 days) or end-of-week. `new_vs_fixed` buckets first-seen and
   resolved times per ISO week; `time_to_fix` uses resolved − first seen. `project_change` / `overall_change` compare
   now with 30 days ago and report "not enough history" when the first successful scan is newer than that.
+
+## PDF and SARIF export
+* `services/pdf_export.py` prints a report's HTML to PDF with Microsoft Edge / Google Chrome in headless mode
+  (`--print-to-pdf`, throw-away profile, no network features), then waits until the file is complete (the Edge
+  launcher can return early). The report's print CSS (A4, page numbers, footer) is used as is. No browser →
+  a clear error suggesting Print → Save as PDF.
+* `services/sarif_export.py` writes SARIF 2.1.0: one run per scanner, rules with plain-language help and GitHub's
+  `security-severity`, results for open and undecided findings only, `partialFingerprints` from the finding
+  fingerprint, repository-relative `%SRCROOT%` paths (absolute paths inside the repository are cut), installed-
+  version findings pointing at the project's requirements.txt / package.json, web findings as logical locations.

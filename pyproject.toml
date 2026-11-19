@@ -1,6 +1,6 @@
 [project]
 name = "local-security-scanner"
-version = "1.0.0"
+version = "1.2.0"
 description = "Local-first multi-repository security scanner (Trivy + Gitleaks) with a Streamlit dashboard"
 requires-python = ">=3.12"
 readme = "README.md"

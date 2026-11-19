@@ -71,7 +71,7 @@ def render() -> None:
 
 
 def _management_summary(conn, cfg, repo) -> None:  # noqa: ANN001
-    section("Management summary", "plain-language VAPT report for managers and clients · print to PDF")
+    section("Management summary", "plain-language VAPT report for managers and clients · HTML and PDF")
     st.caption("Overall risk level, a table per project, the ten things to fix first written as actions, what was "
                "and was not tested, and progress over the last 30 days. No jargon, no secret values.")
     c1, c2 = st.columns([1, 3], vertical_alignment="center")
@@ -88,8 +88,8 @@ def _management_summary(conn, cfg, repo) -> None:  # noqa: ANN001
                                             "risk": data["risk"][0], "actions": len(data["priorities"])}
     last = st.session_state.get("summary_last")
     if not last or last["scope"] != (repo["id"] if repo else None):
-        c2.caption("Uses the scope chosen above. Generates an HTML file in reports/exports; open it and choose "
-                   "Print → Save as PDF.")
+        c2.caption("Uses the scope chosen above. Generates the report in reports/exports; then create a PDF with "
+                   "one click.")
         return
     try:
         path = safe_report_path(last["path"], cfg.reports_dir)
@@ -98,14 +98,15 @@ def _management_summary(conn, cfg, repo) -> None:  # noqa: ANN001
         return
     c2.markdown(f"<div class='lss-chips' style='justify-content:flex-start'>{t.chip(last['risk'], 'info', 'shield_check')}"
                 f"{t.chip(f'{last['actions']} action(s) to take', 'neutral', 'bug')}</div>", unsafe_allow_html=True)
-    d1, d2 = st.columns([1, 3], vertical_alignment="center")
-    d1.download_button("Download summary (HTML)", path.read_bytes(), path.name, "text/html",
+    d1, d2, d3 = st.columns([1, 1, 2], vertical_alignment="center")
+    _pdf_button(d1, path, "summary")
+    d2.download_button("Download HTML", path.read_bytes(), path.name, "text/html",
                        icon=":material/download:", width="stretch", key="summary_download")
-    d2.caption(f"Saved to {path}")
+    d3.caption(f"Saved to {path}")
 
 
 def _audit_report(conn, cfg, repo) -> None:  # noqa: ANN001
-    section("Detailed audit report", "full VAPT-style report for one repository · print to PDF from the browser")
+    section("Detailed audit report", "full VAPT-style report for one repository · HTML and PDF")
     if repo is None:
         notice("neutral", "Choose one repository", "The detailed audit report covers a single repository. Pick it in "
                "“Report scope” above.")
@@ -130,7 +131,8 @@ def _audit_report(conn, cfg, repo) -> None:  # noqa: ANN001
                                           "web": len(data.get("web", []))}
     last = st.session_state.get("audit_last")
     if not last or last["repo_id"] != repo["id"]:
-        c2.caption("Generates an HTML file in reports/exports. Open it and choose Print → Save as PDF for a PDF copy.")
+        c2.caption("Generates the report in reports/exports; then create a PDF with one click, or download SARIF.")
+        _sarif(conn, repo)
         return
     try:
         path = safe_report_path(last["path"], cfg.reports_dir)
@@ -146,10 +148,43 @@ def _audit_report(conn, cfg, repo) -> None:  # noqa: ANN001
                 f"{t.chip(f'{last.get('web', 0)} web app issues', 'neutral', 'globe')}"
                 f"{t.chip(f'{last['misconfs']} misconfigurations', 'neutral', 'sliders')}</div>",
                 unsafe_allow_html=True)
-    d1, d2 = st.columns([1, 3], vertical_alignment="center")
-    d1.download_button("Download report (HTML)", path.read_bytes(), path.name, "text/html", icon=":material/download:",
+    d1, d2, d3 = st.columns([1, 1, 2], vertical_alignment="center")
+    _pdf_button(d1, path, "audit")
+    d2.download_button("Download HTML", path.read_bytes(), path.name, "text/html", icon=":material/download:",
                        width="stretch", key="audit_download")
-    d2.caption(f"Saved to {path} · open it in a browser and choose Print → Save as PDF. {note}")
+    d3.caption(f"Saved to {path}. {note}")
+    _sarif(conn, repo)
+
+
+def _sarif(conn, repo) -> None:  # noqa: ANN001
+    from services.sarif_export import sarif_bytes
+
+    section("SARIF for GitHub and VS Code", "the standard format other security tools read")
+    s1, s2 = st.columns([1, 3], vertical_alignment="center")
+    s1.download_button("Download SARIF", sarif_bytes(conn, repo["id"]), f"{repo['name']}.sarif",
+                       "application/sarif+json", icon=":material/data_object:", width="stretch", key="sarif_download")
+    s2.caption("Open issues of this repository (not the ones marked as false positive / accepted). Upload it to "
+               "GitHub (repository → Security → Code scanning, or the upload-sarif action) to see the issues on the "
+               "exact lines of code, or open it in VS Code with the SARIF Viewer extension.")
+
+
+def _pdf_button(col, path, key: str) -> None:  # noqa: ANN001
+    """Create the PDF with the browser already on this computer (Edge / Chrome), then offer it for download."""
+    from services.pdf_export import PdfError, html_to_pdf
+
+    pdf = path.with_suffix(".pdf")
+    if pdf.is_file() and pdf.stat().st_mtime >= path.stat().st_mtime:
+        col.download_button("Download PDF", pdf.read_bytes(), pdf.name, "application/pdf", type="primary",
+                            icon=":material/picture_as_pdf:", width="stretch", key=f"{key}_pdf_dl")
+        return
+    if col.button("Create PDF", icon=":material/picture_as_pdf:", width="stretch", key=f"{key}_pdf_make"):
+        try:
+            with st.spinner("Creating the PDF…"):
+                html_to_pdf(path)
+        except PdfError as exc:
+            notice("err", "PDF not created", str(exc))
+            return
+        st.rerun()
 
 
 def _saved_exports(cfg) -> None:  # noqa: ANN001

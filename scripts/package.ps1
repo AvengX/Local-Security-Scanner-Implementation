@@ -5,7 +5,7 @@
     Includes code, tests, scripts, docs and config.example.yaml.
     EXCLUDES everything machine- or user-specific: .venv, config.yaml, data (SQLite DB), reports, logs,
     vapt_lab, external_targets (cloned repos + their scan results), caches.
-    Output: dist\LocalSecurityScanner-<yyyyMMdd>.zip
+    Output: dist\LocalSecurityScanner-<version>-<yyyyMMdd>.zip
 #>
 [CmdletBinding()]
 param([string]$OutDir = '')
@@ -13,12 +13,14 @@ param([string]$OutDir = '')
 $ErrorActionPreference = 'Stop'
 $Root = Split-Path -Parent $PSScriptRoot
 if (-not $OutDir) { $OutDir = Join-Path $Root 'dist' }
-$name = "LocalSecurityScanner-$(Get-Date -Format yyyyMMdd)"
+$version = ((Get-Content (Join-Path $Root 'utils\version.py')) -match '__version__' -replace '.*"(.+)".*', '$1') | Select-Object -First 1
+$name = "LocalSecurityScanner-$version-$(Get-Date -Format yyyyMMdd)"
 $stage = Join-Path ([IO.Path]::GetTempPath()) "lss-package-$PID\LocalSecurityScanner"
 if (Test-Path (Split-Path $stage)) { Remove-Item -Recurse -Force (Split-Path $stage) }
 New-Item -ItemType Directory -Force $stage | Out-Null
 
-$files = 'app.py', 'run_scan.py', 'config.example.yaml', 'requirements.txt', 'README.md', '.gitignore', 'pyproject.toml'
+$files = 'app.py', 'run_scan.py', 'config.example.yaml', 'requirements.txt', 'README.md', 'CHANGELOG.md', '.gitignore',
+         'pyproject.toml'
 $dirs = '.streamlit', 'engine', 'database', 'dashboard', 'services', 'utils', 'tests', 'scripts', 'docs', 'vapt'
 
 foreach ($f in $files) { Copy-Item (Join-Path $Root $f) $stage }
