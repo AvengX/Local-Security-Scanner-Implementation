@@ -146,3 +146,18 @@ Repository Discovery Engine  (engine/repository_discovery.py)
 * `ScanOrchestrator._scan_web` wraps the DAST scan in the launcher when `dast.targets[].start_command` is set;
   `start_dir` must stay inside the project. A launch failure is a FAILED run with coverage (findings become
   UNVERIFIED, never resolved).
+
+## Alerts
+* `services/alert_service.py`, table `alerts` (schema v5). `ScanOrchestrator._post_batch` calls `process_batch`
+  (errors are logged, never break a batch): findings with a `NEW` change in this batch, at or above
+  `alerts.min_severity`, still open and undecided, deduplicated per project by `dedup_key`, become one alert with
+  per-project counts and up to 8 identifiers. Delivery: Windows toast through PowerShell and the WinRT
+  `ToastNotificationManager` (title/body passed in environment variables and XML-escaped), and/or a JSON POST to
+  an https webhook (`text` field for Teams/Slack). The delivery outcome is stored with the alert.
+
+## Pre-commit secret guard
+* `services/secret_guard.py` writes `.git/hooks/pre-commit` (path from `git rev-parse --git-path hooks`, LF line
+  endings) that runs `gitleaks git --pre-commit --staged --redact --no-banner`. Exit 1 → commit blocked with an
+  explanation; Gitleaks missing/failing → allowed with a warning. An existing hook is renamed to
+  `pre-commit.lss-previous` and run first; `remove()` restores it. `core.hooksPath` → refused (would touch tracked
+  files). Marker line identifies our hook.

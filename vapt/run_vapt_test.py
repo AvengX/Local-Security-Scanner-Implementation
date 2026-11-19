@@ -127,6 +127,7 @@ class Vapt:
             "trivy": {"scan_types": ["fs", "config"], "scanners": ["vuln", "misconfig", "secret"],
                       "generate_sbom": True},
             "gitleaks": {"modes": ["git", "dir"]},
+            "alerts": {"enabled": True, "min_severity": "HIGH", "windows_notification": False},
             "dast": {"targets": [{"repository": "vuln-python-app", "url": self.web_vuln.url,
                                   "login": {"url": self.web_vuln.url + "login", "username": LOGIN_USER,
                                             "password_env": LOGIN_ENV}},
@@ -164,6 +165,7 @@ class Vapt:
     def phase_scan(self) -> int:
         print("\n== Phase 3: full scan (Trivy fs + config + SBOM, Gitleaks git + dir, Bandit, code scan, DAST)")
         code, out = self.cli("scan-all")
+        self.scan_out = out
         last = self.max_run_id()
         bad = self.q("SELECT r.name, s.scanner, s.scan_type, s.status, s.error_message FROM scan_runs s "
                      "JOIN repositories r ON r.id=s.repository_id WHERE s.status NOT IN (?,?)", *SUCCESS)
@@ -448,6 +450,34 @@ class Vapt:
         finally:
             conn.close()
 
+    def phase_alerts_guard(self, secrets: dict[str, str]) -> None:
+        print("\n== Phase 6c: alerts and pre-commit secret guard")
+        first = self.q("SELECT * FROM alerts ORDER BY id LIMIT 1")
+        self.r.add("6c Alerts", "The first full scan raised an alert for new serious problems",
+                   bool(first) and first[0]["severity"] == "CRITICAL" and first[0]["new_count"] > 0
+                   and "ALERT #" in getattr(self, "scan_out", ""),
+                   f"{first[0]['new_count']} new, worst {first[0]['severity']}" if first else "no alert")
+        payload = " ".join(r["summary_json"] for r in self.q("SELECT summary_json FROM alerts"))
+        self.r.add("6c Alerts", "Alerts contain counts and names only - no secret values",
+                   bool(payload) and not any(v in payload for v in secrets.values()))
+        repo = Path(self.lab / "targets" / "clean-app")
+        code, out = self.cli("guard", "install", "--name", "clean-app")
+        hook_ok = code == 0 and "secret guard On" in out
+        token = secrets["github_pat_current"]
+        leak = repo / "guard_test.py"
+        leak.write_text(f'TOKEN = "{token}"\n', encoding="utf-8")
+        subprocess.run(["git", "-C", str(repo), "add", "guard_test.py"], capture_output=True)
+        blocked = subprocess.run(["git", "-C", str(repo), "-c", "user.email=lab@example.invalid", "-c",
+                                  "user.name=lab", "commit", "-m", "guard test"], capture_output=True, text=True)
+        subprocess.run(["git", "-C", str(repo), "reset", "-q"], capture_output=True)
+        leak.unlink(missing_ok=True)
+        self.r.add("6c Guard", "Secret guard installed and blocks a commit containing a token (value not shown)",
+                   hook_ok and blocked.returncode != 0 and "BLOCKED" in blocked.stderr
+                   and token not in blocked.stdout + blocked.stderr,
+                   f"exit {blocked.returncode}")
+        code, out = self.cli("guard", "remove", "--name", "clean-app")
+        self.r.add("6c Guard", "Secret guard can be removed again", code == 0 and "secret guard Off" in out)
+
     def phase_reports(self) -> None:
         print("\n== Phase 7: reports")
         code, out = self.cli("report")
@@ -549,6 +579,7 @@ class Vapt:
         else:
             self.r.add("6 Offline", "Offline scan (requires runnable Trivy)", False, "skipped: Trivy unavailable")
         self.phase_triage()
+        self.phase_alerts_guard(secrets)
         self.phase_reports()
         self.phase_leak_audit(secrets)
         md = self.write_results(started)

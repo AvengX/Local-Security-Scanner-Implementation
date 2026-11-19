@@ -1,4 +1,4 @@
--- Local Security Scanner schema (version 4). Applied idempotently.
+-- Local Security Scanner schema (version 5). Applied idempotently.
 PRAGMA foreign_keys = ON;
 
 CREATE TABLE IF NOT EXISTS repositories (
@@ -117,6 +117,20 @@ CREATE TABLE IF NOT EXISTS triage_log (
     at          TEXT    NOT NULL
 );
 CREATE INDEX IF NOT EXISTS ix_triage_log_finding ON triage_log(finding_id, at);
+
+-- One alert per scan batch that found new serious problems (shown in the dashboard, optionally sent as a Windows
+-- notification and/or to a webhook). Only counts and identifiers are stored - never secret values.
+CREATE TABLE IF NOT EXISTS alerts (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at   TEXT    NOT NULL,
+    batch_id     TEXT,
+    severity     TEXT    NOT NULL,                  -- worst severity among the new findings
+    new_count    INTEGER NOT NULL,
+    summary_json TEXT    NOT NULL,                  -- per project / category counts and top items
+    delivered    TEXT,                              -- e.g. "toast,webhook" or a delivery error
+    read_at      TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_alerts_read ON alerts(read_at);
 
 -- Lock rows prevent concurrent scans of the same repository across processes.
 CREATE TABLE IF NOT EXISTS repo_locks (

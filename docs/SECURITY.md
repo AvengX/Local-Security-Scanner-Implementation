@@ -50,6 +50,10 @@ weaken Git's ownership checks itself.
 * Web-scan login (optional): only the NAME of an environment variable is stored; the password is read at scan time,
   sent once to the app's own login form (same origin, loopback) and never written to config, database, reports or
   logs. Configuration errors never echo input values, so a password typed into the wrong field is not displayed.
+* Alerts: a webhook (https only, optional, off by default) receives counts, project names, check / advisory IDs,
+  package names and file paths — never secret values or code. Windows notifications stay on this computer.
+* Secret guard (optional, per project): adds `.git/hooks/pre-commit` only; it runs Gitleaks with `--redact` on
+  staged changes, so a blocked secret is never printed. An existing hook is preserved.
 * The built-in code scan for other languages reads files as text and never stores matched source lines.
 * Bandit reports are rewritten after parsing without code snippets, and hardcoded-password messages are
   replaced by a fixed text; a failed, timed-out or cancelled Bandit run leaves no report behind.

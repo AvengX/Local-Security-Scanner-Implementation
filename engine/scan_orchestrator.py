@@ -81,6 +81,7 @@ class BatchSummary:
     repositories: int = 0
     runs: list[RunSummary] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
+    alert_id: int | None = None
 
     def status_counts(self) -> dict[str, int]:
         out: dict[str, int] = {}
@@ -520,6 +521,12 @@ class ScanOrchestrator:
             expired = expire_due(conn)  # accepted risks past their review date count again
             if expired:
                 log.info("Triage decisions expired", extra={"count": expired})
+            try:  # alerts must never break a scan batch
+                from services.alert_service import process_batch
+
+                batch.alert_id = process_batch(conn, self.cfg, batch.batch_id)
+            except Exception:  # noqa: BLE001
+                log.exception("Alert processing failed", extra={"batch": batch.batch_id})
             if self.cfg.scan.retention_days > 0:
                 pruned = dao.prune_history(conn, self.cfg.scan.retention_days)
                 for p in pruned["report_paths"]:

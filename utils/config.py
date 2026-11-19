@@ -266,6 +266,25 @@ class DastConfig(_Strict):
         return next((t for t in self.targets if t.repository == repository and t.url == url), None)
 
 
+class AlertsConfig(_Strict):
+    """Tell someone when a scan finds NEW serious problems (also scheduled scans nobody is watching)."""
+
+    enabled: bool = True
+    min_severity: Literal["CRITICAL", "HIGH", "MEDIUM", "LOW"] = Field(
+        "HIGH", description="Alert on new findings of this severity or worse")
+    windows_notification: bool = Field(True, description="Show a Windows notification")
+    webhook_url: str = Field("", description="Optional https webhook (Teams / Slack / ntfy ...) that receives a short "
+                                             "summary: counts, project names, check names - never secret values")
+
+    @field_validator("webhook_url")
+    @classmethod
+    def _hook(cls, value: str) -> str:
+        value = value.strip()
+        if value and not re.fullmatch(r"https://[^\s/$.?#][^\s]*", value):
+            raise ValueError("The webhook address must start with https://")
+        return value
+
+
 class DashboardConfig(_Strict):
     host: str = "127.0.0.1"
     port: int = Field(8501, ge=1024, le=65535)
@@ -299,6 +318,7 @@ class AppConfig(_Strict):
     gitleaks: GitleaksConfig = Field(default_factory=GitleaksConfig)
     sast: SastConfig = Field(default_factory=SastConfig)
     dast: DastConfig = Field(default_factory=DastConfig)
+    alerts: AlertsConfig = Field(default_factory=AlertsConfig)
     dashboard: DashboardConfig = Field(default_factory=DashboardConfig)
     schedule: ScheduleConfig = Field(default_factory=ScheduleConfig)
 

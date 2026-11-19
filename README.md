@@ -29,7 +29,7 @@ Your running local apps ──► Web scan (DAST) ──┘
 
 Nothing is uploaded. Only Trivy downloads its vulnerability list from the internet, and offline mode turns that off.
 The web scan only talks to apps on this computer (localhost / 127.0.0.1 / ::1).
-The scanner never changes your projects.
+The scanner never changes your projects — the only exception is the optional secret guard, which you switch on per project and which adds one file, `.git/hooks/pre-commit` (outside your code and history).
 
 ## Tech stack
 | Layer | Technology | Used for |
@@ -105,7 +105,7 @@ repository_roots: ['C:\Users\you\source\repos', 'D:\Projects']
 
 **8. Optional: prove it works on this laptop.** Open **VAPT Lab → Run VAPT test**, or run:
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\run_vapt_test.ps1   # should report 94/94 PASS
+powershell -ExecutionPolicy Bypass -File .\scripts\run_vapt_test.ps1   # should report 98/98 PASS
 ```
 
 **Every day after that:** run `.\scripts\start.ps1` and use the dashboard.
@@ -153,6 +153,25 @@ Every page answers one question. Full guide: [docs/UI_GUIDE.md](docs/UI_GUIDE.md
 * **Help & glossary page:** five steps to get started, what each page and status means, severity → how soon to
   fix, what is and is not checked, and a searchable glossary of about 50 security words (CVE, XSS, CORS, …).
 * **Management summary** (Reports): a one-page, plain-language report for managers — see Reports below.
+
+**Alerts: hear about new problems without opening the dashboard**
+* After every scan — also the scheduled weekly one — findings seen for the **first time**, at or above the chosen
+  severity (default *High*) and not marked as false positive / accepted, become **one alert per scan**.
+* It appears at the top of the **Overview** until you press *Mark as read*, can pop up as a **Windows
+  notification** (built in, nothing to install), and can be sent to an **https webhook** (Teams, Slack, ntfy …).
+  Alerts only contain counts, project names, check IDs, packages and file paths — never secret values or code.
+* Settings → *Alerts*. Try it: `python run_scan.py test-alert`.
+
+**Secret guard: stop secrets before they are committed**
+* Repositories → click a project → *Secret guard* → **Install** (or `python run_scan.py guard install --name X`).
+  It adds `.git/hooks/pre-commit`, which runs Gitleaks on the **staged changes** at every commit (about a
+  second). A commit that contains a password, key or token is **blocked** with a plain explanation; the value is
+  never printed.
+* An existing pre-commit hook is kept and still runs first; *Remove* restores it. Projects with a custom hooks
+  folder (`core.hooksPath`, e.g. Husky) are not touched — the panel shows the line to add there. If Gitleaks is
+  missing or fails, the commit is allowed with a warning. `git commit --no-verify` skips it once; a test value can
+  be marked with a `gitleaks:allow` comment.
+* `python run_scan.py guard status` lists every project.
 
 **On every page**
 * **Sidebar → System health:** Trivy, Gitleaks, Bandit (code scan), web scan (number of app addresses),
@@ -285,8 +304,8 @@ instead of claiming a clean result. Misconfigurations lists the configuration fi
 * The original Trivy, Gitleaks, Bandit, code-scan and web-scan output of each scan is also downloadable.
 
 **VAPT Lab**: a self-test for the scanner.
-* **Run VAPT test** builds 4 practice projects with planted problems (old libraries, fake keys, unsafe settings, insecure Python, JavaScript and template code, plus one clean project) and starts 2 practice web apps on 127.0.0.1 (one unsafe with a members area behind a login, one done right), scans them, and checks 94 expectations — including that every finding has a plain-language explanation and that triage decisions survive rescans.
-* Shows the result (for example 94/94), expected versus actual for every check, and past runs.
+* **Run VAPT test** builds 4 practice projects with planted problems (old libraries, fake keys, unsafe settings, insecure Python, JavaScript and template code, plus one clean project) and starts 2 practice web apps on 127.0.0.1 (one unsafe with a members area behind a login, one done right), scans them, and checks 98 expectations — including that every finding has a plain-language explanation and that triage decisions survive rescans.
+* Shows the result (for example 98/98), expected versus actual for every check, and past runs.
 * It never touches your real projects.
 
 **Settings**
@@ -440,7 +459,7 @@ randomly generated fake tokens (never real credentials) and are skipped if a too
 .\scripts\run_vapt_test.ps1 -Dashboard
 ```
 Builds a lab of intentionally vulnerable repositories, scans it with the real application and verifies
-94 PASS/FAIL checks (triage decisions, installed versions, auto-start, CVEs, IaC misconfigurations, secrets incl. Git history, SAST code issues in Python and other languages, DAST web issues incl. behind a login, plain-language explanations, false positives, remediation,
+98 PASS/FAIL checks (alerts, secret guard, triage decisions, installed versions, auto-start, CVEs, IaC misconfigurations, secrets incl. Git history, SAST code issues in Python and other languages, DAST web issues incl. behind a login, plain-language explanations, false positives, remediation,
 offline mode, reports, secret-leak audit). Scope and details: [docs/VAPT_TEST.md](docs/VAPT_TEST.md).
 
 ### Sharing with someone else

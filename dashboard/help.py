@@ -79,6 +79,12 @@ GLOSSARY: dict[str, str] = {
     "False positive": "A finding that looks like a problem but is not one in your situation. Check the line; the "
                       "explanation says when the scanner is unsure.",
     "Remediation": "The fix: what to change so the problem goes away.",
+    "Pre-commit hook": "A small script Git runs before every commit. The secret guard uses one to stop commits that "
+                       "contain passwords or keys (Repositories → project → Secret guard).",
+    "Webhook": "An internet address that receives a short message, used to post alerts to Teams, Slack or a phone "
+               "app. Optional - alerts otherwise stay on this computer.",
+    "Alert": "A message after a scan that found new serious problems: shown on the Overview and optionally as a "
+             "Windows notification or webhook message.",
     "Triage": "Deciding what to do with a finding: fix it, mark it as a false positive, accept the risk for a while, "
               "or archive it. Done in each finding's details under 'Your decision'.",
     "Accepted risk": "A real problem you knowingly decide to live with for now, with a reason and a review date. "
@@ -115,13 +121,14 @@ PAGES_HELP = [
     ("Web app issues", "Problems found by testing your running local apps through their address (DAST)."),
     ("Misconfigurations", "Unsafe settings in Dockerfiles, Kubernetes, Terraform and similar files (only shown when "
                           "you have such files)."),
-    ("Repositories", "Your projects: scan them, see when they were last scanned and their status."),
+    ("Repositories", "Your projects: scan them, see when they were last scanned and their status, and switch on the "
+                     "secret guard that blocks commits containing passwords or keys."),
     ("Scan History", "Every scan run with its result, duration and any error."),
     ("Reports", "Management summary (plain language, for managers), detailed audit report per project, CSV/JSON "
                 "exports and the scanners' raw output."),
     ("VAPT Lab", "A self-test: builds practice projects and web apps with planted problems and checks that every "
                  "one is found."),
-    ("Settings", "Project folders, scanners, web app addresses and logins, schedule."),
+    ("Settings", "Project folders, scanners, alerts, web app addresses (start commands, logins), schedule."),
 ]
 
 STATUSES = [

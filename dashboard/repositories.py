@@ -34,6 +34,38 @@ def _busy(conn) -> bool:  # noqa: ANN001
         is_queued(k) for k in st.session_state.get("lss_queued", {}) if k == "scan-all" or k.startswith("repo:"))
 
 
+def _secret_guard(repo) -> None:  # noqa: ANN001
+    """Install / remove the pre-commit secret guard for this project (an explicit, per-project choice)."""
+    from pathlib import Path
+
+    from engine.scanner_health import check_gitleaks
+    from services import secret_guard as sg
+
+    path = Path(repo["path"])
+    gs = sg.status(path)
+    section("Secret guard", "stops a commit that contains a password, key or token - before it reaches Git history")
+    tone = {"installed": "ok", "not_installed": "neutral", "other_hook": "neutral"}.get(gs.state, "warn")
+    c1, c2 = st.columns([4, 1], vertical_alignment="center")
+    c1.markdown(t.notice(tone, f"Secret guard: {gs.label}", gs.detail
+                         + (" Installing adds one file, .git/hooks/pre-commit (not part of your code or history); "
+                            "every commit is then checked with Gitleaks in about a second." if gs.state in
+                            ("not_installed", "other_hook") else "")), unsafe_allow_html=True)
+    if gs.state in ("not_installed", "other_hook"):
+        if c2.button("Install", icon=":material/shield:", width="stretch", key=f"guard_on_{repo['id']}"):
+            try:
+                sg.install(path, check_gitleaks().path)
+            except sg.GuardError as exc:
+                notice("err", "Not installed", str(exc))
+            else:
+                st.toast(f"Secret guard installed for {repo['name']}", icon=":material/shield:")
+                st.rerun()
+    elif gs.state == "installed":
+        if c2.button("Remove", icon=":material/remove_moderator:", width="stretch", key=f"guard_off_{repo['id']}"):
+            sg.remove(path)
+            st.toast(f"Secret guard removed from {repo['name']}", icon=":material/remove_moderator:")
+            st.rerun()
+
+
 def render() -> None:
     cfg = get_config()
     conn = get_conn(cfg)
@@ -161,6 +193,7 @@ def render() -> None:
                 st.session_state["history_repo"] = repo["name"]
                 if "history" in PAGES:
                     st.switch_page(PAGES["history"])
+        _secret_guard(repo)
         runs = dao.list_scan_runs(conn, int(repo["id"]), limit=10)
         section("Recent scans", f"{len(runs)} most recent scanner runs")
         if not runs:

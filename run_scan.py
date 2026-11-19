@@ -59,6 +59,8 @@ def _print_batch(batch, as_json: bool) -> int:
                      ["run_id", "repository", "scanner", "scan_type", "status", "findings", "new", "resolved", "error"])
         for e in d["errors"]:
             print(f"  ! {e}")
+        if getattr(batch, "alert_id", None):
+            print(f"  ALERT #{batch.alert_id}: new serious problems found - see the Overview page.")
     if any("Another scan job is running" in e for e in batch.errors):
         return EXIT_BUSY
     return EXIT_SCAN_FAILURES if batch.failed else EXIT_OK
@@ -224,6 +226,69 @@ def cmd_summary(cfg: AppConfig, args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def cmd_guard(cfg: AppConfig, args: argparse.Namespace) -> int:
+    """Install, remove or show the pre-commit secret guard of one project (or the status of all)."""
+    from database import repositories as dao
+    from database.db import init_db
+    from engine.scanner_health import check_gitleaks
+    from services import secret_guard as sg
+
+    conn = init_db(cfg.db_path)
+    if args.name or args.path:
+        repos = dao.find_repositories(conn, name=args.name, path=args.path)
+        if len(repos) != 1:
+            print(f"Repository not found or ambiguous ({len(repos)} matches).")
+            conn.close()
+            return EXIT_USAGE
+    elif args.action == "status":
+        repos = dao.list_repositories(conn)
+    else:
+        print("Name the project with --name or --path.")
+        conn.close()
+        return EXIT_USAGE
+    conn.close()
+    code = EXIT_OK
+    for r in repos:
+        path = Path(r["path"])
+        try:
+            if args.action == "install":
+                st = sg.install(path, check_gitleaks().path)
+            elif args.action == "remove":
+                st = sg.remove(path)
+            else:
+                st = sg.status(path)
+        except sg.GuardError as exc:
+            print(f"  {r['name']}: not installed - {exc}")
+            code = EXIT_SCAN_FAILURES
+            continue
+        print(f"  {r['name']}: secret guard {st.label} - {st.detail}")
+    return code
+
+
+def cmd_test_alert(cfg: AppConfig, args: argparse.Namespace) -> int:
+    """Send a test alert through the configured channels (Windows notification / webhook)."""
+    from services.alert_service import alert_text, notify_windows, post_webhook
+
+    sample = {"severity": "HIGH", "new_count": 1, "projects": {"example": {"severity": {"HIGH": 1},
+                                                                          "category": {"CODE": 1}}},
+              "top": [{"severity": "HIGH", "item": "test alert - nothing is wrong", "repository": "example",
+                       "category": "CODE"}]}
+    title, body = alert_text(sample)
+    title = "TEST - " + title
+    ok = True
+    if cfg.alerts.windows_notification:
+        err = notify_windows(title, body)
+        print(f"Windows notification: {err or 'sent'}")
+        ok &= not err
+    if cfg.alerts.webhook_url:
+        err = post_webhook(cfg.alerts.webhook_url, title, body, sample)
+        print(f"Webhook: {err or 'sent'}")
+        ok &= not err
+    if not cfg.alerts.windows_notification and not cfg.alerts.webhook_url:
+        print("No alert channel is enabled (alerts are shown on the Overview page only).")
+    return EXIT_OK if ok else EXIT_SCAN_FAILURES
+
+
 def cmd_update_databases(cfg: AppConfig, args: argparse.Namespace) -> int:
     from engine.scanner_health import check_trivy, trivy_db_freshness
     from engine.trivy_scanner import TrivyScanner
@@ -364,6 +429,11 @@ def build_parser() -> argparse.ArgumentParser:
     ag.add_argument("--name", help="Repository name (as discovered)")
     ag.add_argument("--path", help="Absolute repository path")
 
+    gd = sub.add_parser("guard", help="Pre-commit secret guard: install / remove / status")
+    gd.add_argument("action", choices=["install", "remove", "status"])
+    gd.add_argument("--name")
+    gd.add_argument("--path")
+    sub.add_parser("test-alert", help="Send a test alert (Windows notification / webhook)")
     sm = sub.add_parser("summary", help="Write the plain-language management summary (HTML) for all or one project")
     sm.add_argument("--name")
     sm.add_argument("--path")
@@ -388,7 +458,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 COMMANDS = {
     "init": cmd_init, "discover": cmd_discover, "scan-all": cmd_scan_all, "scan-repo": cmd_scan_repo,
-    "status": cmd_status, "report": cmd_report, "audit": cmd_audit, "summary": cmd_summary, "update-databases": cmd_update_databases,
+    "status": cmd_status, "report": cmd_report, "audit": cmd_audit, "summary": cmd_summary, "test-alert": cmd_test_alert, "guard": cmd_guard, "update-databases": cmd_update_databases,
     "health": cmd_health, "schedule": cmd_schedule, "unschedule": cmd_unschedule, "prune": cmd_prune,
 }
 

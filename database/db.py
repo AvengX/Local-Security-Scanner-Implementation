@@ -14,7 +14,7 @@ from utils.paths import SCHEMA_PATH
 
 log = get_logger(__name__)
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 
 def _rebuild_findings_with_category(conn: sqlite3.Connection, category: str, after: str) -> None:
@@ -56,11 +56,18 @@ def _add_triage(conn: sqlite3.Connection) -> None:
         raise RuntimeError("Triage tables are missing after applying the schema")
 
 
+def _add_alerts(conn: sqlite3.Connection) -> None:
+    """v5: alerts table (created by schema.sql, applied before migrations); only checks it exists."""
+    if not conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='alerts'").fetchone():
+        raise RuntimeError("Alerts table is missing after applying the schema")
+
+
 # Ordered migrations: (target_version, callable). Each runs inside a transaction.
 # Future schema changes append here; never edit a released migration.
 MIGRATIONS: list[tuple[int, Callable[[sqlite3.Connection], None]]] = [(2, _allow_code_category),
                                                                       (3, _allow_web_category),
-                                                                      (4, _add_triage)]
+                                                                      (4, _add_triage),
+                                                                      (5, _add_alerts)]
 
 
 def utcnow() -> str:

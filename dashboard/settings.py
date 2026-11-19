@@ -203,6 +203,21 @@ def _config_tab(cfg: AppConfig) -> None:
                                       "(eval, innerHTML, SQL built from strings, TLS checks turned off, |safe in "
                                       "templates, …). Reads files only; nothing to install.")
 
+        section("Alerts", "tell me when a scan finds new serious problems - also scheduled scans nobody watches")
+        al1, al2, al3 = st.columns([1, 1, 1])
+        alerts_on = al1.checkbox("Enable alerts", cfg.alerts.enabled,
+                                 help="After every scan, findings seen for the first time (and not marked as false "
+                                      "positive / accepted) become an alert on the Overview page.")
+        sev_opts = ["CRITICAL", "HIGH", "MEDIUM", "LOW"]
+        alerts_sev = al2.selectbox("Alert on new findings of", sev_opts, index=sev_opts.index(cfg.alerts.min_severity),
+                                   format_func=lambda s: f"{s.title()} or worse")
+        alerts_win = al3.checkbox("Windows notification", cfg.alerts.windows_notification,
+                                  help="A pop-up notification in the corner of the screen. Nothing to install.")
+        alerts_hook = st.text_input("Webhook address (optional, https)", cfg.alerts.webhook_url,
+                                    placeholder="https://… (Teams / Slack / ntfy incoming webhook)",
+                                    help="Receives a short summary: counts, project names and check names - never "
+                                         "secret values or code. Leave empty to keep alerts on this computer.")
+
         section("Web scan (DAST)", "tests your running apps through their address · apps on this computer only")
         dast_on = st.checkbox("Enable web scan (DAST)", cfg.dast.enabled,
                               help="While an app runs, the scanner visits its pages like a browser and checks for "
@@ -277,6 +292,8 @@ def _config_tab(cfg: AppConfig) -> None:
         data["sast"] = dict(enabled=sast_on, skip_tests=[x.strip() for x in sast_skip.split(",") if x.strip()],
                             other_languages=sast_other)
         rows = dast_rows.to_dict("records") if hasattr(dast_rows, "to_dict") else list(dast_rows)
+        data["alerts"] = dict(enabled=alerts_on, min_severity=alerts_sev, windows_notification=alerts_win,
+                              webhook_url=alerts_hook.strip())
         data["dast"] = dict(enabled=dast_on, max_pages=int(dast_pages), max_requests=int(dast_reqs),
                             request_timeout=int(dast_to),
                             targets=[_dast_target(r, old_login, old_targets) for r in rows

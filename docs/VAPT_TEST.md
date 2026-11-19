@@ -45,7 +45,7 @@ Fake credentials are generated randomly on each run, belong to no account, and a
 `vapt_lab\lab_secrets.json` only so the leak audit can search for them. Dependencies are never installed
 or executed; IaC is never deployed.
 
-## Checks (94)
+## Checks (98)
 1. **Health**: Trivy, Gitleaks and Bandit runnable, code scan for other languages and web scan built in, Trivy DB
    cached and fresh.
 2. **Discovery**: all 4 repositories found.
@@ -84,7 +84,7 @@ or executed; IaC is never deployed.
    app's exposed `.env` and the test account's sign-in password) anywhere in the database, raw reports, exports or logs.
 
 ## Reference run (2026-11-19, Trivy 0.76.2, Gitleaks 8.30.1, Bandit 1.9.4, code scan 1.0, DAST 1.1, Windows 11)
-94/94 PASS (incl. triage, installed versions and auto-start), including 7 code issues found by the built-in check in other languages and 16 web app issues
+98/98 PASS (incl. alerts, secret guard, triage, installed versions and auto-start), including 7 code issues found by the built-in check in other languages and 16 web app issues
 on the unsafe lab app (one of them only reachable after signing in); 0 on the clean app.
 
 Earlier reference run (2026-11-18, DAST 1.0): 73/73 PASS.
@@ -104,3 +104,8 @@ only) with Flask 0.12.2 — listed unpinned in `requirements.txt` — and Jinja2
 must find Flask's CVEs from the installed version and skip Jinja2 (no double counting). `clean-app` gets `serve.py`,
 a correctly secured app on a free port with a start command and no one starting it: the scanner must start it, scan
 it with zero findings and stop it again (port closed).
+
+**Alerts and secret guard:** the first full scan must raise an alert (worst severity CRITICAL, with a count) and the
+CLI must print it; no planted secret value may appear in any alert. `guard install --name clean-app` must install
+the hook, a commit containing a planted token must be blocked without printing the token, and `guard remove` must
+take the hook away again. (Windows notifications are off in the lab configuration.)

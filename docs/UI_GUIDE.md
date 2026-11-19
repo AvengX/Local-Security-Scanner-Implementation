@@ -29,7 +29,7 @@ Every number on every page is read from the local SQLite database. There is no s
 | Repositories | **Status counters.** A searchable table with state (Running / Queued / Clean / Findings / Failed / Timed out / Not scanned), branch, last commit, last scan, duration and counts. **Details:** recent scans with errors. | Discover; scan all (offline toggle); scan one repository; jump to its findings or history. Scan buttons are disabled while a scan is running or was just queued, which prevents repeated requests. |
 | Scan History | **Run metrics:** success rate, failures, average duration. **All runs:** table with exit code and error. **Comparison:** coverage-aware comparison of two scans of the *same* repository. | Filters, comparison |
 | Reports | Scope (combined or one repository). **Management summary**: plain-language HTML for managers (risk level, per-project table, top-10 actions, what was tested, 30-day progress). Exports generated now: CSV, JSON, Markdown, HTML. Detailed audit report for one repository (14 sections incl. code and web app issues, print-ready HTML; Print → Save as PDF). Saved export files. Raw Trivy/Gitleaks/Bandit/code-scan/DAST reports with date, status and size. Only files registered in the database *and* inside `reports/` can be downloaded. | Download, save all formats, generate audit report |
-| VAPT Lab | **Lab status.** Scenario table (planted weaknesses per lab repository). Checks by phase. Expected vs actual for all 94 checks, and run history. Only the generated lab is scanned, never `external_targets` or your repositories. | Run VAPT test (background, about 1–2 min) |
+| VAPT Lab | **Lab status.** Scenario table (planted weaknesses per lab repository). Checks by phase. Expected vs actual for all 98 checks, and run history. Only the generated lab is scanned, never `external_targets` or your repositories. | Run VAPT test (background, about 1–2 min) |
 | Help & glossary | Five steps to get started, severity → how soon to fix, statuses, what each page shows, what is and is not checked, searchable glossary (~50 terms). | Show the welcome tour again |
 | Settings | **Browse for a folder…** opens the Windows folder picker and adds the chosen folder to the repository roots. **Configuration**, in sections: roots, exclusions, scanning, scanners, storage, preferences. **Scanners & vulnerability DB:** health, DB location and freshness, update. **Database & backups:** integrity, size, row counts, backup now. **Scheduling:** instructions, dry-run preview of the exact PowerShell command, registered tasks. | Validate and save (backs up `config.yaml` first), reset to defaults (confirmation checkbox, backup first), re-check tools, update DB, back up database |
 
@@ -101,3 +101,9 @@ Defined in `dashboard/theme.py` and `.streamlit/config.toml`.
 * **Settings → Scanners:** *Also check installed library versions*. **Settings → Web scan (DAST):** *Start command*
   and *Start folder* columns. **Web app issues → What was tested:** *Starts automatically* column; *App was not
   running* suggests adding a start command.
+
+## Alerts and secret guard
+* **Overview:** unread alerts at the top (time, what was new per project, most serious item) with *Mark as read*.
+* **Settings → Alerts:** enable, minimum severity, Windows notification, optional https webhook.
+* **Repositories → project details → Secret guard:** state (On / Off / another hook exists / custom hooks folder /
+  not Git) with *Install* or *Remove*.

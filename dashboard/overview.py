@@ -8,7 +8,7 @@ import pandas as pd
 import streamlit as st
 
 from dashboard import theme as t
-from dashboard.common import (PAGES, ago, db_health, get_config, get_conn, get_freshness, html, misconfig_relevant,
+from dashboard.common import (PAGES, ago, db_health, fmt_ts, get_config, get_conn, get_freshness, html, misconfig_relevant,
                               page_header, section, tool_health, vuln_db_state)
 from dashboard.states import no_repositories, system_alerts
 from services import analytics_service as an
@@ -34,12 +34,35 @@ def _posture(m: dict, wt_secrets: int) -> tuple[str, str, str, str]:
     return "ok", "No open findings", "shield_check", "The latest successful scans found nothing open."
 
 
+def _new_alerts(conn) -> None:  # noqa: ANN001
+    """Unread alerts: scans that found new serious problems since you last looked."""
+    from services import alert_service as al
+
+    items = al.unread(conn, 10)
+    if not items:
+        return
+    lines = []
+    for a in items:
+        title, body = al.alert_text(a["summary"])
+        lines.append(f"<li><b>{t.esc(fmt_ts(a['created_at']))}</b> - {t.esc(title)}. {t.esc(body)}</li>")
+    c1, c2 = st.columns([5, 1], vertical_alignment="center")
+    c1.markdown(t.notice("err" if items[0]["severity"] in ("CRITICAL", "HIGH") else "warn",
+                         f"{len(items)} new alert(s): scans found new serious problems",
+                         body_html=f"<ul style='margin:.3rem 0 0 1rem'>{''.join(lines)}</ul>"
+                                   "Open Security Findings (sorted by severity) to see them."),
+                unsafe_allow_html=True)
+    if c2.button("Mark as read", icon=":material/done_all:", width="stretch", key="alerts_read"):
+        al.mark_read(conn)
+        st.rerun()
+
+
 def render() -> None:
     cfg = get_config()
     conn = get_conn(cfg)
     page_header("Security Overview", "Posture across all locally discovered repositories · data never leaves this PC",
                 search=True)
     system_alerts(cfg, "ov")
+    _new_alerts(conn)
     m = an.overview_metrics(conn)
     if m["repositories"] == 0:
         no_repositories(cfg, conn, "ov")
