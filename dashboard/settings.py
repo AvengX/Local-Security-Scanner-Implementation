@@ -68,9 +68,7 @@ def backup_database(cfg: AppConfig, conn: sqlite3.Connection) -> Path:
     return dest
 
 
-@st.cache_data(ttl=60, show_spinner=False)
-def _scheduled_tasks() -> list[dict[str, str]]:
-    return sch.query_tasks()
+from dashboard.common import schedule_tasks as _scheduled_tasks  # noqa: E402 - shared cache with the sidebar
 
 
 def render() -> None:
@@ -386,24 +384,77 @@ def _db_tab(cfg: AppConfig, conn: sqlite3.Connection) -> None:
 
 
 def _sched_tab(cfg: AppConfig) -> None:
-    notice("info", "Scheduled tasks are created only from the command line",
-           "Scheduled scans run `run_scan.py scan-all` through Windows Task Scheduler while the dashboard is closed, "
-           "and never overlap. This page shows the commands and what is registered; it does not create tasks.")
-    st.code(sch.instructions(), language="powershell")
-    section("Preview (dry run)", "exact PowerShell that `schedule` would register — nothing is executed")
+    st.markdown("A scheduled scan runs **Scan all** through Windows Task Scheduler at a fixed time, even when the "
+                "dashboard is closed. It runs as your user with normal (limited) rights, never overlaps a running "
+                "scan, and catches up as soon as the computer is on again if it was off at that time. New serious "
+                "problems become an **alert** (see Settings -> Alerts).")
+    tasks = _scheduled_tasks()
+    state, label, detail = sch.schedule_health(tasks)
+    notice({"ok": "ok", "warn": "warn", "err": "err"}[state], f"Scheduled scan: {label}", detail)
+
+    section("Registered scheduled scans")
+    if tasks:
+        for tk in tasks:
+            with st.container(border=True):
+                c1, c2, c3 = st.columns([3, 1, 1], vertical_alignment="center")
+                c1.markdown(f"**{tk['frequency'].title()} scan** - {t.esc(tk['schedule'])}  \n"
+                            f"Next run: {t.esc(tk['next_run'].replace('T', ' ')[:16] or '-')} - Last run: "
+                            f"{t.esc(tk['last_run'].replace('T', ' ')[:16] or 'never')} ({t.esc(tk['last_result_text'])})"
+                            f" - State: {t.esc(tk['state'])}")
+                if c2.button("Run now", icon=":material/play_arrow:", key=f"sch_run_{tk['frequency']}", width="stretch",
+                             help="Starts the task immediately in the background, exactly as the scheduler would."):
+                    res = sch.run_now(tk["frequency"])
+                    (st.toast if res.ok else st.error)(("Started: " if res.ok else "Could not start: ") + res.message)
+                    _scheduled_tasks.clear()
+                confirm = c3.checkbox("Confirm", key=f"sch_del_ok_{tk['frequency']}",
+                                      help="Tick, then press Remove")
+                if c3.button("Remove", icon=":material/delete:", key=f"sch_del_{tk['frequency']}", width="stretch",
+                             disabled=not confirm):
+                    res = sch.delete_task(tk["frequency"])
+                    if res.ok:
+                        st.toast(f"Removed the {tk['frequency']} scheduled scan", icon=":material/delete:")
+                    else:
+                        notice("err", "Could not remove the task", res.message)
+                    _scheduled_tasks.clear()
+                    st.rerun()
+    else:
+        st.caption("None registered yet.")
+
+    section("Set up a scheduled scan", "creates (or replaces) a task in Windows Task Scheduler for your user")
+    days = ["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"]
     c1, c2, c3 = st.columns(3)
-    freq = c1.selectbox("Frequency", ["daily", "weekly"], key="sch_freq")
-    tm = c2.text_input("Time (HH:MM)", cfg.schedule.time, key="sch_time")
-    day = c3.selectbox("Day (weekly)", ["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"],
-                       index=["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"].index(cfg.schedule.weekly_day),
-                       key="sch_day", disabled=freq == "daily")
+    freq = c1.selectbox("How often", ["weekly", "daily"], key="sch_freq", format_func=str.title)
+    tm = c2.text_input("Time (HH:MM, 24-hour)", cfg.schedule.time, key="sch_time")
+    day = c3.selectbox("Day (weekly)", days, index=days.index(cfg.schedule.weekly_day), key="sch_day",
+                       disabled=freq == "daily", format_func=lambda d: sch._DAY_NAMES[d])  # noqa: SLF001
     try:
-        st.code(sch.build_create_script(freq, tm, day), language="powershell", wrap_lines=True)
+        script = sch.build_create_script(freq, tm, day)
     except ValueError as exc:
         notice("err", "Invalid schedule", str(exc))
-    section("Registered tasks")
-    tasks = _scheduled_tasks()
-    if tasks:
-        st.dataframe(tasks, hide_index=True, width="stretch")
-    else:
-        notice("neutral", "No scheduled tasks", "No Local Security Scanner tasks are registered in Task Scheduler.")
+        return
+    exe, args = sch.task_action(freq)
+    when = f"every day at {tm}" if freq == "daily" else f"every {sch._DAY_NAMES[day]} at {tm}"  # noqa: SLF001
+    replace = any(tk["frequency"] == freq for tk in tasks)
+    st.markdown(f"This will {'replace the' if replace else 'create a'} **{freq} scan** that runs **{when}**:  \n"
+                f"`{exe} {args}`")
+    with st.expander("Exact PowerShell that registers it"):
+        st.code(script, language="powershell", wrap_lines=True)
+    ok = st.checkbox("I understand this creates a Windows scheduled task for my user account", key="sch_confirm")
+    if st.button("Replace scheduled scan" if replace else "Create scheduled scan", type="primary",
+                 icon=":material/event_repeat:", disabled=not ok, key="sch_create"):
+        res = sch.create_task(freq, tm, day)
+        if res.ok:
+            try:  # remember the chosen time/day as the default
+                data = cfg.model_dump()
+                data["schedule"].update(time=tm, weekly_day=day)
+                save_config(AppConfig.model_validate(data))
+                get_config.clear() if hasattr(get_config, "clear") else None
+            except Exception:  # noqa: BLE001 - the task exists either way
+                pass
+            st.toast(f"Scheduled: {freq} scan {when}", icon=":material/event_repeat:")
+        else:
+            notice("err", "Could not create the scheduled task", res.message or "Task Scheduler refused the request.")
+        _scheduled_tasks.clear()
+        st.rerun()
+    st.caption("Command line equivalent: python run_scan.py schedule --frequency weekly --day SUN --time 02:00 - "
+               "remove with: python run_scan.py unschedule. Runs are logged in logs/scheduled_runs.log.")

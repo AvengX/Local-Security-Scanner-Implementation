@@ -82,6 +82,14 @@ def tool_health(trivy_exe: str | None, gitleaks_exe: str | None) -> dict[str, di
                                    _classify(check_bandit()), _classify(check_git()))}
 
 
+@st.cache_data(ttl=120, show_spinner=False)
+def schedule_tasks() -> list[dict[str, str]]:
+    """Registered scheduled scans (one PowerShell call, at most every two minutes)."""
+    from services.scheduling_service import query_tasks
+
+    return query_tasks()
+
+
 def db_health(cfg: AppConfig, conn: sqlite3.Connection) -> dict[str, Any]:
     try:
         ok = conn.execute("PRAGMA quick_check").fetchone()[0] == "ok"
@@ -344,6 +352,13 @@ def sync_roots(cfg: AppConfig, conn: sqlite3.Connection) -> None:
              f"{stats['deactivated']} no longer monitored", icon=":material/travel_explore:")
 
 
+def _schedule_row() -> tuple[str, str]:
+    from services.scheduling_service import schedule_health
+
+    state, label, _ = schedule_health(schedule_tasks())
+    return state, label
+
+
 def render_sidebar(cfg: AppConfig, conn: sqlite3.Connection) -> None:
     health = tool_health(cfg.trivy.executable, cfg.gitleaks.executable)
     f = get_freshness(cfg)
@@ -357,6 +372,7 @@ def render_sidebar(cfg: AppConfig, conn: sqlite3.Connection) -> None:
                 f"{len(cfg.dast.targets)} address{'es' if len(cfg.dast.targets) != 1 else ''}" if cfg.dast.targets
                 else "No addresses")] if cfg.dast.enabled else []),
             ("Vuln DB", vstate, vlabel),
+            ("Scheduled scan", *_schedule_row()),
             ("Database", dbh["state"], dbh["label"])]
     body = "".join(f"<div class='lss-health-row' style='--c:{t.TONES[s]}'><span>{t.esc(n)}</span>"
                    f"<span class='state'><i aria-hidden='true'></i>{t.esc(label)}</span></div>" for n, s, label in rows)

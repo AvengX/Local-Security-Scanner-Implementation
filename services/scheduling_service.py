@@ -100,24 +100,102 @@ def delete_task(frequency: str) -> ScheduleResult:
     return ScheduleResult(proc.returncode == 0, msg, cmd)
 
 
+_QUERY_PS = (
+    "$ErrorActionPreference = 'SilentlyContinue'; "
+    f"$tasks = @(Get-ScheduledTask -TaskPath '\\{TASK_FOLDER}\\'); "
+    "$out = foreach ($t in $tasks) { $i = $t | Get-ScheduledTaskInfo; $tr = $t.Triggers | Select-Object -First 1; "
+    "[pscustomobject]@{ name = $t.TaskName; state = [string]$t.State; "
+    "next = if ($i.NextRunTime) { $i.NextRunTime.ToString('s') } else { '' }; "
+    "last = if ($i.LastRunTime -and $i.LastRunTime.Year -gt 2000) { $i.LastRunTime.ToString('s') } else { '' }; "
+    "result = [int64]$i.LastTaskResult; trigger = [string]$tr.CimClass.CimClassName; "
+    "start = [string]$tr.StartBoundary; days = [int]$tr.DaysOfWeek } }; "
+    "ConvertTo-Json -InputObject @($out) -Compress"
+)
+_BITS = {1: "SUN", 2: "MON", 4: "TUE", 8: "WED", 16: "THU", 32: "FRI", 64: "SAT"}
+RESULT_TEXT = {0: "Finished OK", 1: "Finished - some scanner runs failed", 2: "Could not start (configuration)",
+               3: "Skipped - another scan was already running", 267008: "Ready", 267009: "Running now",
+               267011: "Not run yet", 2147750687: "Already running (overlap prevented)"}
+
+
+def _describe(item: dict) -> str:
+    when = (item.get("start") or "")[11:16]
+    if "Weekly" in (item.get("trigger") or ""):
+        days = [d for bit, d in _BITS.items() if int(item.get("days") or 0) & bit]
+        return f"Weekly on {', '.join(_DAY_NAMES[d] for d in days) or '?'} at {when}"
+    if "Daily" in (item.get("trigger") or ""):
+        return f"Daily at {when}"
+    return item.get("trigger") or "?"
+
+
 def query_tasks() -> list[dict[str, str]]:
-    """Return registered Local Security Scanner tasks (name, next run, status)."""
+    """Registered Local Security Scanner tasks: frequency, task, schedule, state, next/last run, last result.
+
+    Uses PowerShell's ScheduledTasks module (JSON) so the result does not depend on the Windows display language."""
     if os.name != "nt":
         return []
+    proc = _run(["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", _QUERY_PS])
+    if proc.returncode != 0 or not proc.stdout.strip():
+        return []
+    import json
+
+    try:
+        items = json.loads(proc.stdout)
+    except ValueError:
+        return []
     out: list[dict[str, str]] = []
-    for freq, name in TASK_NAMES.items():
-        proc = _run(["schtasks", "/Query", "/TN", name, "/FO", "LIST", "/V"])
-        if proc.returncode != 0:
+    for it in items if isinstance(items, list) else [items]:
+        name = str(it.get("name") or "")
+        freq = next((f for f, full in TASK_NAMES.items() if full.endswith("\\" + name)), "")
+        if not freq:
             continue
-        info: dict[str, str] = {"frequency": freq, "task": name}
-        for line in proc.stdout.splitlines():
-            if ":" in line:
-                k, v = line.split(":", 1)
-                k = k.strip()
-                if k in ("Next Run Time", "Status", "Last Run Time", "Last Result", "Schedule Type"):
-                    info[k] = v.strip()
-        out.append(info)
+        code = int(it.get("result") or 0)
+        out.append({"frequency": freq, "task": TASK_NAMES[freq], "schedule": _describe(it),
+                    "state": str(it.get("state") or ""), "next_run": str(it.get("next") or ""),
+                    "last_run": str(it.get("last") or ""), "last_result": str(code),
+                    "last_result_text": RESULT_TEXT.get(code, f"Exit code {code}")})
     return out
+
+
+def run_now(frequency: str) -> ScheduleResult:
+    """Start a registered task immediately (to test it). It runs in the background like a scheduled run."""
+    cmd = ["schtasks", "/Run", "/TN", TASK_NAMES[frequency]]
+    if os.name != "nt":
+        return ScheduleResult(False, "Not on Windows", cmd)
+    proc = _run(cmd)
+    return ScheduleResult(proc.returncode == 0, (proc.stdout or proc.stderr).strip(), cmd)
+
+
+def schedule_health(tasks: list[dict[str, str]], now: "datetime | None" = None) -> tuple[str, str, str]:
+    """(state ok|warn|err, short label, explanation) for the sidebar and Overview."""
+    from datetime import datetime, timedelta
+
+    if not tasks:
+        return "warn", "Not set up", ("No scheduled scan is registered, so scans only run when you start them. Set one "
+                                      "up in Settings -> Scheduling.")
+    now = now or datetime.now()
+    worst = ("ok", "", "")
+    for t in tasks:
+        code = int(t.get("last_result") or 0)
+        period = timedelta(days=1 if t["frequency"] == "daily" else 7)
+        nxt = t.get("next_run", "").replace("T", " ")[:16]
+        state, label, detail = "ok", f"{t['frequency'].title()} - next {nxt or '?'}", t.get("schedule", "")
+        if t.get("state") == "Disabled":
+            state, label, detail = "warn", "Disabled", f"The {t['frequency']} task is disabled in Task Scheduler."
+        elif code not in (0, 267008, 267009, 267011, 2147750687):
+            state, label = "err", f"Last run failed ({RESULT_TEXT.get(code, f'exit {code}')})"
+            detail = "See logs/scheduled_runs.log and Scan History for the failed runs."
+        elif t.get("last_run"):
+            try:
+                last = datetime.fromisoformat(t["last_run"])
+            except ValueError:
+                last = None
+            if last and now - last > period + timedelta(days=1):
+                state, label = "warn", "Missed runs"
+                detail = (f"The last scheduled scan was on {t['last_run'][:10]}. The computer may have been off; "
+                          "missed runs start as soon as it is on again.")
+        if ("ok", "warn", "err").index(state) >= ("ok", "warn", "err").index(worst[0]) and (state != "ok" or not worst[1]):
+            worst = (state, label, detail)
+    return worst
 
 
 def instructions() -> str:

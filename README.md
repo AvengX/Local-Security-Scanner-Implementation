@@ -313,7 +313,12 @@ instead of claiming a clean result. Misconfigurations lists the configuration fi
   **Validate and save** backs up the old settings first. **Reset to defaults** asks for confirmation.
 * **Scanners & vulnerability DB:** tool status and versions; **Update vulnerability database** (needs internet).
 * **Database & backups:** size and health of the results database; **Back up database now**.
-* **Scheduling:** shows the command for automatic daily or weekly scans. Nothing is created without your confirmation in the command line.
+* **Scheduling:** set up automatic scans right here. Pick *weekly* or *daily*, the time and the day, tick *I understand
+  this creates a Windows scheduled task for my user account* and press **Create scheduled scan** (the exact
+  PowerShell is shown first). Registered scans are listed with their next run, last run and last result, each with
+  **Run now** (to test it) and **Remove** (tick *Confirm* first). Tasks run as your user with limited rights, never
+  overlap, and start as soon as the computer is on again if a run was missed. The sidebar and the Overview show a
+  **Scheduled scan** health row: *Not set up*, *Weekly – next …*, *Last run failed* or *Missed runs*.
 
 **A typical routine:** **Repositories → Scan all** → read **Overview → Recommended actions** → rotate keys
 (**Secrets**) and upgrade packages (**Vulnerabilities**) → scan again. Fixed items turn *Resolved* →

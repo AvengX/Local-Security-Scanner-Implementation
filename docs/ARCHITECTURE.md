@@ -161,3 +161,12 @@ Repository Discovery Engine  (engine/repository_discovery.py)
   explanation; Gitleaks missing/failing → allowed with a warning. An existing hook is renamed to
   `pre-commit.lss-previous` and run first; `remove()` restores it. `core.hooksPath` → refused (would touch tracked
   files). Marker line identifies our hook.
+
+## Scheduled scans from the dashboard
+* `services/scheduling_service.py`: `create_task` (Register-ScheduledTask: current user, `-RunLevel Limited`,
+  `-MultipleInstances IgnoreNew`, `-StartWhenAvailable`), `delete_task` / `run_now` (schtasks), and `query_tasks`,
+  which reads `Get-ScheduledTask` + `Get-ScheduledTaskInfo` as JSON so it does not depend on the Windows display
+  language. `schedule_health()` turns that into Not set up / next run / Disabled / Last run failed (task exit code
+  not 0) / Missed runs (last run older than the period + 1 day).
+* The dashboard caches the task list for two minutes (`dashboard.common.schedule_tasks`) and clears it after every
+  change. Creating, running or removing a task needs an explicit click (and a confirmation tick for create/remove).

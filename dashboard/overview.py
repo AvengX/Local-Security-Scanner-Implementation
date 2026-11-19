@@ -240,6 +240,11 @@ def _health_html(cfg, conn) -> str:  # noqa: ANN001
         rows.append(("Web scan (DAST)", "ok" if n else "warn", "Built in" if n else "No addresses added",
                      f"{n} address{'es' if n != 1 else ''}" if n else "add one in Settings"))
     rows.append(("Vulnerability DB", vstate, vlabel, f"updated {ago(f.updated_at)}" if f.present else "not downloaded"))
+    from dashboard.common import schedule_tasks
+    from services.scheduling_service import schedule_health
+
+    s_state, s_label, s_detail = schedule_health(schedule_tasks())
+    rows.append(("Scheduled scan", s_state, s_label, s_detail[:90]))
     rows.append(("SQLite database", dbh["state"], dbh["label"], f"{dbh['size'] / 1024:.0f} KB"))
     li = "".join(f"<li><span class='lss-step' style='--c:{t.TONES[s]}'>{t.icon('check_circle' if s == 'ok' else 'alert', 14, t.TONES[s])}"
                  f"</span><div class='grow'><div class='t'>{t.esc(n)}</div><div class='s'>{t.esc(lbl)}"

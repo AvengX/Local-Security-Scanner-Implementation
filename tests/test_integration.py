@@ -326,7 +326,7 @@ def test_real_dependency_folders_skipped(cfg, roots: Path) -> None:
     orch = ScanOrchestrator(cfg, trivy_tool=check_trivy() if cfg.trivy.enabled else None,
                             gitleaks_tool=check_gitleaks())
     batch = orch.scan_all()
-    assert all(r.status in ("COMPLETED", "COMPLETED_WITH_FINDINGS") for r in batch.runs), batch.runs
+    assert all(r.status in ("COMPLETED", "COMPLETED_WITH_FINDINGS") for r in batch.runs),         [(r.scanner, r.scan_type, r.status, r.error) for r in batch.runs]
     paths = {r[0] for r in orch.connect().execute("SELECT file_path FROM findings WHERE category='SECRET'")}
     assert paths == {"app/main.py"}, paths
     assert not list((cfg.data_dir / "tmp").glob("*.toml"))  # generated config cleaned up
