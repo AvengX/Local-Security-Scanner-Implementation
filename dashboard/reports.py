@@ -34,7 +34,7 @@ def render() -> None:
         repo_id = repo["id"] if repo else None
         label = repo["name"] if repo else "all"
         fdf = an.findings_frame(conn, repo_id)
-        active = int(fdf["status"].isin(an.ACTIVE).sum()) if not fdf.empty else 0
+        active = int(an.active_mask(fdf).sum()) if not fdf.empty else 0
         s2.markdown(f"<div class='lss-chips' style='justify-content:flex-start'>"
                     f"{t.chip(f'{active} open / unverified findings', 'warn' if active else 'ok', 'bug')}"
                     f"{t.chip(f'{len(fdf)} findings incl. resolved', 'neutral', 'database')}</div>",

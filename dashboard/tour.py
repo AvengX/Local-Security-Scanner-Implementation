@@ -31,7 +31,9 @@ STEPS = [
      "**green/blue = low**."),
     ("Step 4 - Understand and fix",
      "Click any issue. The **In plain words** box explains what it is, why it matters, how an attacker would use "
-     "it, the fix step by step, and how soon to fix it. Words you do not know are in **Help → Glossary**."),
+     "it, the fix step by step, and how soon to fix it. Words you do not know are in **Help → Glossary**.\n\n"
+     "Not a real problem? Under **Your decision** mark it as a **false positive**, **accept the risk** until a review "
+     "date, or **archive** it - always with a reason. It leaves the counts but stays listed in the reports."),
     ("Step 5 - Scan again and share",
      "After fixing, scan again: fixed issues move to **Resolved** automatically. If a check could not run, issues "
      "show as **Unverified** - never as fixed.\n\n"

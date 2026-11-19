@@ -79,6 +79,10 @@ GLOSSARY: dict[str, str] = {
     "False positive": "A finding that looks like a problem but is not one in your situation. Check the line; the "
                       "explanation says when the scanner is unsure.",
     "Remediation": "The fix: what to change so the problem goes away.",
+    "Triage": "Deciding what to do with a finding: fix it, mark it as a false positive, accept the risk for a while, "
+              "or archive it. Done in each finding's details under 'Your decision'.",
+    "Accepted risk": "A real problem you knowingly decide to live with for now, with a reason and a review date. "
+                     "On that date it counts again until someone decides anew.",
     "Loopback / localhost": "The address 127.0.0.1 - this computer only. The web scan is limited to it.",
     "Trivy": "Open-source scanner used here for vulnerable libraries and unsafe configuration files.",
     "Gitleaks": "Open-source scanner used here for secrets in files and Git history.",
@@ -125,6 +129,9 @@ STATUSES = [
     ("UNVERIFIED", "Found earlier, but the latest scan could not check it (the scanner failed, or the web app was "
                    "not running). It is NOT counted as fixed."),
     ("RESOLVED", "A later scan checked the same place and the problem was gone."),
+    ("DECIDED", "A person marked it as a false positive, an accepted risk (comes back on its review date) or "
+                "archived, with a reason. It is left out of the counts but still listed (Status → Decided) and in "
+                "every report."),
 ]
 
 

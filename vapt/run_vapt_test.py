@@ -376,6 +376,51 @@ class Vapt:
         cve = self.findings("vuln-node-app", "package_name='lodash' AND status='OPEN'")
         self.r.add("6 Offline", "Offline scan still detects vulnerabilities (lodash)", bool(cve))
 
+    def phase_triage(self) -> None:
+        print("\n== Phase 6b: triage (false positive / accepted risk)")
+        from datetime import date, timedelta
+
+        from database.db import init_db
+        from services import analytics_service as an
+        from services import triage_service as tri
+
+        conn = init_db(self.app / "data" / "security_scanner.db")
+        try:
+            fp = conn.execute("SELECT f.id FROM findings f JOIN repositories r ON r.id=f.repository_id WHERE "
+                              "r.name='vuln-node-app' AND f.package_name='minimist' AND f.status='OPEN' "
+                              "ORDER BY f.id LIMIT 1").fetchone()
+            ar = conn.execute("SELECT f.id FROM findings f JOIN repositories r ON r.id=f.repository_id WHERE "
+                              "r.name='vuln-node-app' AND f.package_name='lodash' AND f.status='OPEN' "
+                              "ORDER BY f.id LIMIT 1").fetchone()
+            if not fp or not ar:
+                self.r.add("6b Triage", "Lab findings available for triage", False, "minimist/lodash not open")
+                return
+            before = sum(an.overview_metrics(conn)["severity"].values())
+            tri.set_decision(conn, fp[0], "FALSE_POSITIVE", "VAPT lab: marked as a false positive on purpose")
+            tri.set_decision(conn, ar[0], "ACCEPTED_RISK", "VAPT lab: accepted on purpose",
+                             date.today() + timedelta(days=30))
+            after = sum(an.overview_metrics(conn)["severity"].values())
+        finally:
+            conn.close()
+        code, _ = self.cli("scan-repo", "--name", "vuln-node-app")
+        conn = init_db(self.app / "data" / "security_scanner.db")
+        try:
+            kept = tri.get_decision(conn, fp[0])
+            status = conn.execute("SELECT status FROM findings WHERE id=?", (fp[0],)).fetchone()[0]
+            still = sum(an.overview_metrics(conn)["severity"].values())
+            self.r.add("6b Triage", "Decided findings leave the open counts (and stay out after a rescan)",
+                       after == before - 2 and still == after and code == 0, f"{before} -> {after} -> {still}")
+            self.r.add("6b Triage", "A false-positive decision survives a rescan; the scan status is untouched",
+                       bool(kept) and kept["decision"] == "FALSE_POSITIVE" and status == "OPEN",
+                       f"{kept['decision'] if kept else 'lost'} / {status}")
+            expired = tri.expire_due(conn, today=date.today() + timedelta(days=30))
+            back = sum(an.overview_metrics(conn)["severity"].values())
+            self.r.add("6b Triage", "An accepted risk expires on its review date and counts again",
+                       expired == 1 and back == still + 1 and [h["action"] for h in tri.history(conn, ar[0])]
+                       == ["ACCEPTED_RISK", "EXPIRED"], f"{expired} expired, open {still} -> {back}")
+        finally:
+            conn.close()
+
     def phase_reports(self) -> None:
         print("\n== Phase 7: reports")
         code, out = self.cli("report")
@@ -476,6 +521,7 @@ class Vapt:
             self.phase_offline()
         else:
             self.r.add("6 Offline", "Offline scan (requires runnable Trivy)", False, "skipped: Trivy unavailable")
+        self.phase_triage()
         self.phase_reports()
         self.phase_leak_audit(secrets)
         md = self.write_results(started)

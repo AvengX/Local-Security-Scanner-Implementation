@@ -29,7 +29,7 @@ Every number on every page is read from the local SQLite database. There is no s
 | Repositories | **Status counters.** A searchable table with state (Running / Queued / Clean / Findings / Failed / Timed out / Not scanned), branch, last commit, last scan, duration and counts. **Details:** recent scans with errors. | Discover; scan all (offline toggle); scan one repository; jump to its findings or history. Scan buttons are disabled while a scan is running or was just queued, which prevents repeated requests. |
 | Scan History | **Run metrics:** success rate, failures, average duration. **All runs:** table with exit code and error. **Comparison:** coverage-aware comparison of two scans of the *same* repository. | Filters, comparison |
 | Reports | Scope (combined or one repository). **Management summary**: plain-language HTML for managers (risk level, per-project table, top-10 actions, what was tested, 30-day progress). Exports generated now: CSV, JSON, Markdown, HTML. Detailed audit report for one repository (14 sections incl. code and web app issues, print-ready HTML; Print → Save as PDF). Saved export files. Raw Trivy/Gitleaks/Bandit/code-scan/DAST reports with date, status and size. Only files registered in the database *and* inside `reports/` can be downloaded. | Download, save all formats, generate audit report |
-| VAPT Lab | **Lab status.** Scenario table (planted weaknesses per lab repository). Checks by phase. Expected vs actual for all 88 checks, and run history. Only the generated lab is scanned, never `external_targets` or your repositories. | Run VAPT test (background, about 1–2 min) |
+| VAPT Lab | **Lab status.** Scenario table (planted weaknesses per lab repository). Checks by phase. Expected vs actual for all 91 checks, and run history. Only the generated lab is scanned, never `external_targets` or your repositories. | Run VAPT test (background, about 1–2 min) |
 | Help & glossary | Five steps to get started, severity → how soon to fix, statuses, what each page shows, what is and is not checked, searchable glossary (~50 terms). | Show the welcome tour again |
 | Settings | **Browse for a folder…** opens the Windows folder picker and adds the chosen folder to the repository roots. **Configuration**, in sections: roots, exclusions, scanning, scanners, storage, preferences. **Scanners & vulnerability DB:** health, DB location and freshness, update. **Database & backups:** integrity, size, row counts, backup now. **Scheduling:** instructions, dry-run preview of the exact PowerShell command, registered tasks. | Validate and save (backs up `config.yaml` first), reset to defaults (confirmation checkbox, backup first), re-check tools, update DB, back up database |
 
@@ -84,3 +84,12 @@ Defined in `dashboard/theme.py` and `.streamlit/config.toml`.
 * **Settings → Web scan (DAST):** optional columns *Login page*, *Test user*, *Password variable* (environment
   variable name; the password itself is never entered or stored). **Also check JavaScript/TypeScript, HTML
   templates, PHP, Java, Go and C#** toggles the built-in code scan for other languages.
+
+## Triage (your decision)
+* Every open finding's details have **Your decision**: *False positive*, *Accepted risk* or *Archived*, a required
+  reason, and a review date (required for an accepted risk, at most one year; optional for the others). Decided
+  findings show a **Reopen** button with an optional note, and a decision-history table (set, reopened, expired).
+* Tables gain a **Decision** column. The **Status** filter gains **Decided**: *Open* / *Unverified* show only
+  undecided findings; *Decided* shows the decided ones.
+* Findings pages show **Archive N** when old findings sit inside folders that scans now skip (e.g. `.venv`).
+* Expired accepted risks come back automatically (checked when the dashboard opens and after every scan batch).

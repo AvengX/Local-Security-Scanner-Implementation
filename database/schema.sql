@@ -1,4 +1,4 @@
--- Local Security Scanner schema (version 3). Applied idempotently.
+-- Local Security Scanner schema (version 4). Applied idempotently.
 PRAGMA foreign_keys = ON;
 
 CREATE TABLE IF NOT EXISTS repositories (
@@ -95,6 +95,28 @@ CREATE TABLE IF NOT EXISTS finding_changes (
 CREATE INDEX IF NOT EXISTS ix_changes_run ON finding_changes(scan_run_id);
 CREATE INDEX IF NOT EXISTS ix_changes_type_time ON finding_changes(change_type, changed_at);
 CREATE INDEX IF NOT EXISTS ix_changes_finding ON finding_changes(finding_id, scan_run_id);
+
+-- Human decisions about a finding (triage). Kept apart from the scan status, so scans keep updating the status
+-- and a decision survives a finding disappearing and coming back. One current decision per finding.
+CREATE TABLE IF NOT EXISTS finding_triage (
+    finding_id  INTEGER PRIMARY KEY REFERENCES findings(id) ON DELETE CASCADE,
+    decision    TEXT    NOT NULL CHECK (decision IN ('FALSE_POSITIVE','ACCEPTED_RISK','ARCHIVED')),
+    reason      TEXT    NOT NULL,
+    review_by   TEXT,                                -- ISO date; the decision expires after it
+    decided_at  TEXT    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_triage_review ON finding_triage(review_by);
+
+-- Every triage action (set, reopened, expired) for the finding's history and the audit trail.
+CREATE TABLE IF NOT EXISTS triage_log (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    finding_id  INTEGER NOT NULL REFERENCES findings(id) ON DELETE CASCADE,
+    action      TEXT    NOT NULL CHECK (action IN ('FALSE_POSITIVE','ACCEPTED_RISK','ARCHIVED','REOPENED','EXPIRED')),
+    reason      TEXT,
+    review_by   TEXT,
+    at          TEXT    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_triage_log_finding ON triage_log(finding_id, at);
 
 -- Lock rows prevent concurrent scans of the same repository across processes.
 CREATE TABLE IF NOT EXISTS repo_locks (

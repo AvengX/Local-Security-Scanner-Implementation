@@ -64,11 +64,16 @@ def main() -> None:
     }
     conn = get_conn(cfg)
     sync_roots(cfg, conn)
+    from services.triage_service import expire_due
+
+    if expire_due(conn):  # accepted risks past their review date count again
+        st.toast("Some accepted risks reached their review date and are open again.", icon=":material/event:")
     # Hidden while no project has a Dockerfile / Compose / Kubernetes / Helm / Terraform file (nothing to check).
     if not misconfig_relevant(cfg, conn):
         pages.pop("misconfigurations")
     if not cfg.dast.enabled and not conn.execute(
-            "SELECT 1 FROM findings WHERE category='WEB' AND status IN ('OPEN','UNVERIFIED') LIMIT 1").fetchone():
+            "SELECT 1 FROM findings f WHERE category='WEB' AND status IN ('OPEN','UNVERIFIED') AND f.id NOT IN "
+            "(SELECT finding_id FROM finding_triage) LIMIT 1").fetchone():
         pages.pop("web")
     PAGES.update(pages)
     monitor = [pages[k] for k in ("overview", "findings", "vulnerabilities", "secrets", "code", "web",

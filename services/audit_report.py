@@ -339,7 +339,11 @@ def build_audit(conn: sqlite3.Connection, cfg: AppConfig, repository_id: int,
             r["meta"] = json.loads(r.get("metadata_json") or "{}")
         except ValueError:
             r["meta"] = {}
-    active = [r for r in rows if r["status"] in ACTIVE]
+    from services.triage_service import decisions as triage_decisions
+
+    decided = triage_decisions(conn, repository_id)
+    decided_ids = {x["id"] for x in decided}
+    active = [r for r in rows if r["status"] in ACTIVE and r["id"] not in decided_ids]
     resolved = [r for r in rows if r["status"] == "RESOLVED"]
 
     vulns = [_enrich_vuln(r, raw) for r in active if r["category"] == "VULNERABILITY"]
@@ -365,6 +369,7 @@ def build_audit(conn: sqlite3.Connection, cfg: AppConfig, repository_id: int,
         "attempts": attempts, "ok_runs": ok_runs, "trivy_fs": trivy_fs, "raw": raw,
         "active": active, "resolved": resolved, "vulns": vulns, "packages": _package_groups(vulns),
         "secrets": secrets, "misconfs": misconfs, "code": code, "web": web, "others": others, "offline": cfg.scan.offline,
+        "decisions": decided,
         "skip_dirs": list(cfg.scan.skip_dirs), "reports_dir": cfg.reports_dir,
     }
 
@@ -701,7 +706,21 @@ def render_audit_html(d: dict) -> str:
         ["Misconfigurations", str(len(d["misconfs"])), "Failed Trivy configuration checks."],
         ["Code issues (SAST)", str(len(d.get("code", []))), "Risky patterns in the project's own Python code (Bandit)."],
         ["Web app issues (DAST)", str(len(d.get("web", []))), "Found by testing the running app through its address."],
+        ["Decided findings (not counted above)", str(len(d.get("decisions", []))),
+         "Marked by a person as false positive, accepted risk or archived; listed below with the reason."],
     ], {1}))
+    if d.get("decisions"):
+        from services.triage_service import DECISIONS
+
+        s.append("<h3>Decisions recorded (false positives, accepted risks, archived)</h3><p>These are still reported "
+                 "by the scanners but were reviewed by a person. They are excluded from every count in this report. "
+                 "Accepted risks return automatically on their review date.</p>")
+        s.append(_table(["Decision", "Severity", "Finding", "Location", "Reason", "Review on", "Decided"],
+                        [[_e(DECISIONS.get(x["decision"], x["decision"])), _sev(x["severity"]),
+                          _e(x["vulnerability_id"] or x["rule_id"] or x["title"]),
+                          f"<span class='mono'>{_e(x['file_path'])}{':' + str(x['line']) if x['line'] else ''}</span>",
+                          _e(x["reason"]), _e(x["review_by"]), _e(_ts(x["decided_at"]))]
+                         for x in d["decisions"][:200]]))
 
     # 4 -------------------------------------------------------------- severity distribution
     rows4 = []

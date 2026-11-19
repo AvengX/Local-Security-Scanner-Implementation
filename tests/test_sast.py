@@ -135,7 +135,7 @@ def test_migrations_add_code_and_web_categories_and_keep_rows(tmp_path: Path) ->
     conn.close()
 
     conn = init_db(db)
-    assert conn.execute("SELECT value FROM settings WHERE key='schema_version'").fetchone()[0] == "3"
+    assert conn.execute("SELECT value FROM settings WHERE key='schema_version'").fetchone()[0] == "4"
     assert conn.execute("SELECT COUNT(*) FROM findings").fetchone()[0] == 1
     assert conn.execute("SELECT COUNT(*) FROM finding_changes").fetchone()[0] == 1
     conn.execute("INSERT INTO findings(repository_id, fingerprint, dedup_key, scanner, scan_type, category, severity, "

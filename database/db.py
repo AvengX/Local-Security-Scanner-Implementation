@@ -14,7 +14,7 @@ from utils.paths import SCHEMA_PATH
 
 log = get_logger(__name__)
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 
 def _rebuild_findings_with_category(conn: sqlite3.Connection, category: str, after: str) -> None:
@@ -48,10 +48,19 @@ def _allow_web_category(conn: sqlite3.Connection) -> None:
     _rebuild_findings_with_category(conn, "WEB", "CODE")
 
 
+def _add_triage(conn: sqlite3.Connection) -> None:
+    """v4: triage tables (finding_triage, triage_log). They are created by schema.sql (applied before
+    migrations); this step only checks they exist and records the version."""
+    names = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    if not {"finding_triage", "triage_log"} <= names:
+        raise RuntimeError("Triage tables are missing after applying the schema")
+
+
 # Ordered migrations: (target_version, callable). Each runs inside a transaction.
 # Future schema changes append here; never edit a released migration.
 MIGRATIONS: list[tuple[int, Callable[[sqlite3.Connection], None]]] = [(2, _allow_code_category),
-                                                                      (3, _allow_web_category)]
+                                                                      (3, _allow_web_category),
+                                                                      (4, _add_triage)]
 
 
 def utcnow() -> str:

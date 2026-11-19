@@ -45,7 +45,7 @@ Fake credentials are generated randomly on each run, belong to no account, and a
 `vapt_lab\lab_secrets.json` only so the leak audit can search for them. Dependencies are never installed
 or executed; IaC is never deployed.
 
-## Checks (88)
+## Checks (91)
 1. **Health**: Trivy, Gitleaks and Bandit runnable, code scan for other languages and web scan built in, Trivy DB
    cached and fresh.
 2. **Discovery**: all 4 repositories found.
@@ -75,13 +75,16 @@ or executed; IaC is never deployed.
    rescan → DAST-XSS on that page becomes RESOLVED while SQL injection (and the members-area XSS) stays OPEN. Finally stop the app and rescan → the web
    scan is SKIPPED and its issues become UNVERIFIED (not resolved).
 6. **Offline**: `scan-all --offline` succeeds with the cached DB, runs flagged offline, still detects CVEs.
+   **Triage**: marking a minimist CVE as a false positive and a lodash CVE as an accepted risk removes both from the
+   open counts; after a rescan the false positive keeps its decision (scan status still OPEN) and the counts stay
+   down; on the review date the accepted risk expires and counts again.
 7. **Reports**: md/html/json/csv exports, `status`, the plain-language management summary (`summary`), raw JSON
    reports (incl. code scan and DAST) kept locally.
 8. **Leak audit**: no planted secret value (including the SAST fixture password, the password inside the web
    app's exposed `.env` and the test account's sign-in password) anywhere in the database, raw reports, exports or logs.
 
 ## Reference run (2026-11-19, Trivy 0.76.2, Gitleaks 8.30.1, Bandit 1.9.4, code scan 1.0, DAST 1.1, Windows 11)
-88/88 PASS, including 7 code issues found by the built-in check in other languages and 16 web app issues
+91/91 PASS (incl. triage), including 7 code issues found by the built-in check in other languages and 16 web app issues
 on the unsafe lab app (one of them only reachable after signing in); 0 on the clean app.
 
 Earlier reference run (2026-11-18, DAST 1.0): 73/73 PASS.

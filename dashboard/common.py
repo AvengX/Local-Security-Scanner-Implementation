@@ -320,7 +320,8 @@ def misconfig_relevant(cfg: AppConfig, conn: sqlite3.Connection) -> bool:
     Scans still check for misconfigurations either way; the page reappears as soon as such a file exists."""
     try:
         if conn.execute("SELECT 1 FROM findings f JOIN repositories r ON r.id=f.repository_id AND r.active=1 "
-                        "WHERE f.category='MISCONFIGURATION' AND f.status IN ('OPEN','UNVERIFIED') LIMIT 1").fetchone():
+                        "WHERE f.category='MISCONFIGURATION' AND f.status IN ('OPEN','UNVERIFIED') AND f.id NOT IN "
+                        "(SELECT finding_id FROM finding_triage) LIMIT 1").fetchone():
             return True
         return any(c.config_files for c in repo_coverage(cfg, conn))
     except Exception:  # noqa: BLE001 — when unsure, keep the page visible

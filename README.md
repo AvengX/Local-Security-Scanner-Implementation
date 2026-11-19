@@ -105,7 +105,7 @@ repository_roots: ['C:\Users\you\source\repos', 'D:\Projects']
 
 **8. Optional: prove it works on this laptop.** Open **VAPT Lab → Run VAPT test**, or run:
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\run_vapt_test.ps1   # should report 88/88 PASS
+powershell -ExecutionPolicy Bypass -File .\scripts\run_vapt_test.ps1   # should report 91/91 PASS
 ```
 
 **Every day after that:** run `.\scripts\start.ps1` and use the dashboard.
@@ -181,6 +181,14 @@ Every page answers one question. Full guide: [docs/UI_GUIDE.md](docs/UI_GUIDE.md
   **history** (first found, every scan that saw it, when it was fixed).
 * **Status:** *Open* = still there, *Resolved* = a later scan confirmed it is gone,
   *Unverified* = could not be re-checked, so it is kept rather than assumed fixed.
+* **Your decision (triage):** in a finding's details, mark it as a **false positive** (the scanner is wrong here),
+  an **accepted risk** (real, but accepted until a review date — at most a year; it comes back by itself then) or
+  **archived** (no longer relevant). A reason is always required and every decision, reopen and expiry is kept in
+  the finding's decision history. Decided findings leave the counts, the recommended actions and the reports'
+  to-do lists, but stay visible under **Status → Decided**, in the audit report's *Decisions recorded* table and in
+  the management summary's *Risks we accepted* section. A later scan never removes a decision; **Reopen** does.
+* **Old findings in skipped folders:** findings inside folders that scans now skip (for example `.venv`) can never
+  be re-checked. The findings pages offer **Archive N** for them in one click.
 
 **Vulnerabilities**: only security holes in packages your projects use (from `package-lock.json`, `requirements.txt`
 and similar), with the **installed** version and the **version that fixes it**.
@@ -263,8 +271,8 @@ instead of claiming a clean result. Misconfigurations lists the configuration fi
 * The original Trivy, Gitleaks, Bandit, code-scan and web-scan output of each scan is also downloadable.
 
 **VAPT Lab**: a self-test for the scanner.
-* **Run VAPT test** builds 4 practice projects with planted problems (old libraries, fake keys, unsafe settings, insecure Python, JavaScript and template code, plus one clean project) and starts 2 practice web apps on 127.0.0.1 (one unsafe with a members area behind a login, one done right), scans them, and checks 88 expectations — including that every finding has a plain-language explanation.
-* Shows the result (for example 88/88), expected versus actual for every check, and past runs.
+* **Run VAPT test** builds 4 practice projects with planted problems (old libraries, fake keys, unsafe settings, insecure Python, JavaScript and template code, plus one clean project) and starts 2 practice web apps on 127.0.0.1 (one unsafe with a members area behind a login, one done right), scans them, and checks 91 expectations — including that every finding has a plain-language explanation and that triage decisions survive rescans.
+* Shows the result (for example 91/91), expected versus actual for every check, and past runs.
 * It never touches your real projects.
 
 **Settings**
@@ -418,7 +426,7 @@ randomly generated fake tokens (never real credentials) and are skipped if a too
 .\scripts\run_vapt_test.ps1 -Dashboard
 ```
 Builds a lab of intentionally vulnerable repositories, scans it with the real application and verifies
-88 PASS/FAIL checks (CVEs, IaC misconfigurations, secrets incl. Git history, SAST code issues in Python and other languages, DAST web issues incl. behind a login, plain-language explanations, false positives, remediation,
+91 PASS/FAIL checks (triage decisions, CVEs, IaC misconfigurations, secrets incl. Git history, SAST code issues in Python and other languages, DAST web issues incl. behind a login, plain-language explanations, false positives, remediation,
 offline mode, reports, secret-leak audit). Scope and details: [docs/VAPT_TEST.md](docs/VAPT_TEST.md).
 
 ### Sharing with someone else

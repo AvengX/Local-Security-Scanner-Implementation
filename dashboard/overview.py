@@ -125,7 +125,7 @@ def _by_project_html(conn, show_misconf: bool = True) -> str:  # noqa: ANN001
     """Plain table instead of charts: what kind of problem, how many, and the most serious one, per project."""
     repos = an.repository_table(conn)
     fdf = an.findings_frame(conn)
-    act = fdf[fdf["status"].isin(an.ACTIVE)].drop_duplicates(["repository", "dedup_key"]) if not fdf.empty else fdf
+    act = fdf[an.active_mask(fdf)].drop_duplicates(["repository", "dedup_key"]) if not fdf.empty else fdf
     rows = []
     for r in repos.itertuples():
         f = act[act["repository"] == r.name] if not act.empty else act

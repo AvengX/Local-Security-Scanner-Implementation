@@ -116,3 +116,13 @@ Repository Discovery Engine  (engine/repository_discovery.py)
 * `services/summary_report.py` builds the management summary (risk level, per-project table, top-10 actions grouped
   by package or rule, what was tested from the latest runs, 30-day progress). `dashboard/help.py` and
   `dashboard/tour.py` hold the Help/glossary page and the first-run tour (`tour_done` setting).
+
+## Triage (human decisions)
+* Tables `finding_triage` (one current decision per finding: FALSE_POSITIVE / ACCEPTED_RISK / ARCHIVED, reason,
+  review_by, decided_at) and `triage_log` (every set / reopen / expiry) — schema v4. Decisions are kept apart from
+  `findings.status`, so the comparison engine is unchanged: scans keep setting OPEN / UNVERIFIED / RESOLVED, and a
+  decision survives a finding disappearing and coming back (same fingerprint).
+* "Open" everywhere = status OPEN/UNVERIFIED **and** no decision (`services.triage_service.NOT_TRIAGED`,
+  `analytics_service._OPEN` / `active_mask`). Reports list decided findings separately with their reasons.
+* `expire_due()` runs when the dashboard opens, after each scan batch and before the management summary; expired
+  decisions are deleted and logged as EXPIRED.

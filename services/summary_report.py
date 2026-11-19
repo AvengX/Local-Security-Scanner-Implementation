@@ -49,6 +49,9 @@ def _when(ts: str | None) -> str:
 
 def build_summary(conn: sqlite3.Connection, cfg: AppConfig, repository_id: int | None = None) -> dict[str, Any]:
     now = datetime.now(timezone.utc).replace(microsecond=0)
+    from services.triage_service import expire_due
+
+    expire_due(conn)
     where = "id=?" if repository_id is not None else "active=1"
     repos = [dict(r) for r in conn.execute(f"SELECT id, name FROM repositories WHERE {where} ORDER BY name COLLATE "
                                            "NOCASE", (repository_id,) if repository_id is not None else ())]
@@ -67,7 +70,9 @@ def build_summary(conn: sqlite3.Connection, cfg: AppConfig, repository_id: int |
         # re-checked; they are third-party code. Counted separately instead of inflating the risk.
         in_skipped = [r for r in rows if r["status"] in ACTIVE and skip
                       & {p.lower() for p in re.split(r"[\\/]", r["file_path"] or "")}]
-        active = [r for r in rows if r["status"] in ACTIVE and r not in in_skipped]
+        decided_ids = {r[0] for r in conn.execute("SELECT finding_id FROM finding_triage")}
+        in_skipped = [r for r in in_skipped if r["id"] not in decided_ids]
+        active = [r for r in rows if r["status"] in ACTIVE and r not in in_skipped and r["id"] not in decided_ids]
         # The same configuration problem can be reported by two Trivy modes; count it once.
         seen_conf: set[tuple] = set()
         uniq = []
@@ -168,9 +173,12 @@ def build_summary(conn: sqlite3.Connection, cfg: AppConfig, repository_id: int |
                          "top": top_problem[1] if top_problem else "Nothing open",
                          "by_cat": {c: sum(1 for r in active if r["category"] == c) for c in CAT_LABEL}})
     priorities.sort(key=lambda p: (SEV_RANK.get(p["severity"], 9), -p["count"], p["project"]))
+    from services.triage_service import decisions as triage_decisions
+
+    decided = triage_decisions(conn, repository_id)
     label, colour, sentence = risk_level(totals)
     return {"generated_at": now.isoformat(), "projects": projects, "priorities": priorities, "totals": totals,
-            "risk": (label, colour, sentence), "resolved_30": resolved_30, "new_30": new_30,
+            "risk": (label, colour, sentence), "resolved_30": resolved_30, "new_30": new_30, "decisions": decided,
             "scope": repos[0]["name"] if repository_id is not None and repos else "All monitored projects",
             "app_version": __version__}
 
@@ -262,6 +270,22 @@ def render_summary_html(d: dict[str, Any]) -> str:
              "files, or no web address added). 'app not running' means the web app was not started during the scan, "
              "so its earlier issues are kept as unverified - never counted as fixed.</p>")
 
+    acc = [x for x in d.get("decisions", []) if x["decision"] == "ACCEPTED_RISK"]
+    fp = sum(1 for x in d.get("decisions", []) if x["decision"] == "FALSE_POSITIVE")
+    arch = sum(1 for x in d.get("decisions", []) if x["decision"] == "ARCHIVED")
+    s.append("<h2>Risks we accepted, and false alarms</h2>")
+    if acc:
+        s.append("<p>These issues are real but were knowingly accepted for now. Each comes back automatically on its "
+                 "review date.</p><table><thead><tr><th>Project</th><th>Severity</th><th>Issue</th><th>Why accepted"
+                 "</th><th>Review on</th></tr></thead><tbody>" + "".join(
+                     f"<tr><td>{_e(x['repository'])}</td><td><span class='sev {x['severity']}'>"
+                     f"{_e(x['severity'].title())}</span></td><td>{_e(x['title'] or x['rule_id'])}</td>"
+                     f"<td>{_e(x['reason'])}</td><td>{_e(x['review_by'])}</td></tr>" for x in acc) + "</tbody></table>")
+    else:
+        s.append("<p>No risks have been accepted.</p>")
+    s.append(f"<p class='muted'>{fp} finding(s) were marked as false alarms and {arch} archived (for example old "
+             "results in installed-library folders); they are not counted above and are listed with their reasons "
+             "in the dashboard and the audit report.</p>")
     s.append("<h2>4. Progress in the last 30 days</h2>"
              f"<p><b>{d['resolved_30']}</b> issue(s) fixed and confirmed by a re-scan · <b>{d['new_30']}</b> issue(s) "
              "found for the first time.</p>")

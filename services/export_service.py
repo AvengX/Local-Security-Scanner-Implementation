@@ -18,7 +18,8 @@ from utils.validators import SEVERITIES
 
 EXPORT_COLUMNS = ["id", "repository", "scanner", "scan_type", "category", "severity", "status", "identifier",
                   "package_name", "installed_version", "fixed_version", "file_path", "line", "title",
-                  "remediation", "reference_url", "first_seen", "last_seen", "resolved_at"]
+                  "remediation", "reference_url", "first_seen", "last_seen", "resolved_at", "decision",
+                  "decision_reason", "review_by"]
 
 
 def _stamp() -> str:
@@ -66,7 +67,8 @@ def summary_markdown(conn: sqlite3.Connection, repository_id: int | None = None,
                      freshness: DbFreshness | None = None) -> str:
     data = consolidated_data(conn, repository_id, freshness)
     findings = pd.DataFrame(data["findings"])
-    active = findings[findings["status"].isin(an.ACTIVE)] if not findings.empty else findings
+    active = findings[findings["status"].isin(an.ACTIVE) & findings["decision"].isna()] if not findings.empty \
+        else findings
     title = "Security Summary Report"
     if repository_id is not None and data["repositories"]:
         title += f" — {data['repositories'][0]['name']}"

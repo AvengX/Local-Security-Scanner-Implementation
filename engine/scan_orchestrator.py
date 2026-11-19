@@ -433,6 +433,11 @@ class ScanOrchestrator:
         conn = self.connect()
         try:
             set_setting(conn, "last_batch_at", batch.finished_at or utcnow())
+            from services.triage_service import expire_due
+
+            expired = expire_due(conn)  # accepted risks past their review date count again
+            if expired:
+                log.info("Triage decisions expired", extra={"count": expired})
             if self.cfg.scan.retention_days > 0:
                 pruned = dao.prune_history(conn, self.cfg.scan.retention_days)
                 for p in pruned["report_paths"]:

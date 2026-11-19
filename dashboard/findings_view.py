@@ -4,7 +4,7 @@ Misconfigurations, Code issues and Web app issues pages. Secret values are never
 from __future__ import annotations
 
 import json
-from datetime import date
+from datetime import date, timedelta
 from typing import Any
 
 import pandas as pd
@@ -15,6 +15,7 @@ from dashboard.common import (ROW_SELECT, fmt_ts, get_config, get_conn, html, no
                               section, selected_row)
 from dashboard.states import no_repositories
 from services import analytics_service as an
+from services import triage_service as tri
 from services.explain import explain
 from services.export_service import findings_csv_bytes
 from utils.validators import CATEGORIES, SEVERITIES
@@ -84,6 +85,77 @@ def _web_checked(cfg, conn, empty: bool) -> None:  # noqa: ANN001
                "delete are not followed, and only apps on this computer can be tested. Pages behind a login are "
                "tested only for addresses with a test-account login set in Settings (one sign-in POST, password "
                "read from an environment variable).")
+
+
+def _skipped_leftovers(cfg, conn, df: pd.DataFrame) -> None:  # noqa: ANN001
+    """Offer to archive old findings inside folders scans now skip: they can never be re-checked by a scan."""
+    ids = set(tri.skipped_folder_findings(conn, cfg.scan.skip_dirs))
+    here = ids & set(df["id"].astype(int)) if not df.empty else set()
+    if not here:
+        return
+    c1, c2 = st.columns([3, 1], vertical_alignment="center")
+    c1.markdown(t.notice("warn", f"{len(here)} old finding(s) can never be re-checked",
+                         "They are inside folders that scans now skip (" + ", ".join(cfg.scan.skip_dirs[:4])
+                         + " …) - installed third-party code, so they stay Unverified forever. Archive them to take "
+                         "them out of the counts; they stay listed under Status → Decided and in the reports."),
+                unsafe_allow_html=True)
+    if c2.button(f"Archive {len(here)}", icon=":material/inventory_2:", width="stretch",
+                 key="archive_skipped"):
+        n = tri.archive_skipped(conn, cfg.scan.skip_dirs)
+        st.toast(f"Archived {n} finding(s) inside skipped folders", icon=":material/inventory_2:")
+        st.rerun()
+
+
+def _decision_panel(conn, f: pd.Series) -> None:  # noqa: ANN001
+    """False positive / accepted risk / archive, with a reason (and review date), or reopen."""
+    fid = int(f["id"])
+    current = tri.get_decision(conn, fid)
+    section("Your decision", "mark it as a false positive, accept the risk, or archive it - always with a reason")
+    if current:
+        label = tri.DECISIONS[current["decision"]]
+        when = f" · review on {current['review_by']}" if current["review_by"] else ""
+        notice("neutral", f"{label}{when}", f"Reason: {current['reason']} (decided {fmt_ts(current['decided_at'])}). "
+               "This finding is left out of the open counts and to-do lists, and shown under Status → Decided and "
+               "in the reports' decisions section.", icon_name="check_circle")
+        with st.form(f"reopen_{fid}", border=False):
+            r1, r2 = st.columns([3, 1], vertical_alignment="bottom")
+            note = r1.text_input("Note (optional)", key=f"reopen_note_{fid}", placeholder="Why it should count again")
+            if r2.form_submit_button("Reopen", icon=":material/undo:", width="stretch"):
+                tri.reopen(conn, fid, note)
+                st.rerun()
+    elif f["status"] in an.ACTIVE:
+        with st.form(f"triage_{fid}", border=True):
+            choice = st.radio("Decision", list(tri.DECISIONS), format_func=tri.DECISIONS.get, horizontal=True,
+                              key=f"tri_choice_{fid}", captions=[tri.HELP[k] for k in tri.DECISIONS])
+            reason = st.text_area("Reason (required)", key=f"tri_reason_{fid}", max_chars=500, height=80,
+                                  placeholder="e.g. Test fixture value, not a real key / Fix planned in the next "
+                                              "release / Third-party code we do not ship")
+            d1, d2 = st.columns([1, 2], vertical_alignment="bottom")
+            review = d1.date_input("Review date", value=date.today() + timedelta(days=90),
+                                   min_value=date.today() + timedelta(days=1),
+                                   max_value=date.today() + timedelta(days=tri.MAX_REVIEW_DAYS), key=f"tri_rev_{fid}",
+                                   format="YYYY-MM-DD")
+            use_review = d2.checkbox("Bring it back on the review date", value=True, key=f"tri_use_rev_{fid}",
+                                     help="Always on for an accepted risk. For a false positive or archive you can "
+                                          "turn it off.")
+            if st.form_submit_button("Save decision", type="primary", icon=":material/gavel:"):
+                try:
+                    tri.set_decision(conn, fid, choice, reason,
+                                     review if (use_review or choice == "ACCEPTED_RISK") else None)
+                except tri.TriageError as exc:
+                    notice("err", "Not saved", str(exc))
+                else:
+                    st.toast(f"Marked as {tri.DECISIONS[choice].lower()}", icon=":material/gavel:")
+                    st.rerun()
+    else:
+        st.caption("Resolved findings need no decision.")
+    log = tri.history(conn, fid)
+    if log:
+        rows = "".join(f"<tr><td>{t.esc(fmt_ts(x['at']))}</td><td>{t.esc(tri.DECISIONS.get(x['action'], x['action'].title()))}"
+                       f"</td><td>{t.esc(x['reason'] or '')}</td><td>{t.esc(x['review_by'] or '')}</td></tr>"
+                       for x in reversed(log[-20:]))
+        html("<div class='lss-table-wrap'><table class='lss-table'><thead><tr><th>When</th><th>Decision</th>"
+             f"<th>Reason</th><th>Review on</th></tr></thead><tbody>{rows}</tbody></table></div>")
 
 
 def explanation_html(f: dict[str, Any], meta: dict[str, Any], color: str) -> str:
@@ -244,6 +316,7 @@ def render_findings(kind: str) -> None:
     if kind in ("vuln", "misconf", "code", "web"):
         with st.expander("What was checked in each project", icon=":material/fact_check:"):
             _what_was_checked(cfg, conn, kind, empty=False)
+    _skipped_leftovers(cfg, conn, df)
 
     prefill_q = st.session_state.pop("findings_q", None)
     if prefill_q:
@@ -273,9 +346,11 @@ def render_findings(kind: str) -> None:
                                   format_func=lambda r: r if r in with_findings else f"{r} (none found)")
         sel_sev = f2.multiselect("Severity", list(SEVERITIES), key=f"{kind}_sev")
         # Toggle chips instead of a dropdown: every option stays fully readable however narrow the column is.
-        sel_status = f3.pills("Status", ["OPEN", "UNVERIFIED", "RESOLVED"], selection_mode="multi",
+        sel_status = f3.pills("Status", ["OPEN", "UNVERIFIED", "RESOLVED", "DECIDED"], selection_mode="multi",
                               default=["OPEN", "UNVERIFIED"], format_func=str.title, key=f"{kind}_status",
-                              help="Click to turn a status on or off. None selected = show all.") or []
+                              help="Click to turn a status on or off. None selected = show all. Decided = marked "
+                                   "as false positive, accepted risk or archived (open ones are hidden from "
+                                   "Open/Unverified).") or []
         if kind == "all":
             sel_cat = f4.multiselect("Category", list(CATEGORIES), key=f"{kind}_cat")
         else:
@@ -290,8 +365,14 @@ def render_findings(kind: str) -> None:
                             format="YYYY-MM-DD")
 
     view = an.filter_findings(df, repositories=sel_repo, scanners=sel_scanner, categories=sel_cat,
-                              severities=sel_sev, statuses=sel_status, cve=cve,
+                              severities=sel_sev, statuses=None, cve=cve,
                               package="" if by_file else pkg, file=pkg if by_file else "")
+    if sel_status and not view.empty:
+        plain = [s for s in sel_status if s != "DECIDED"]
+        keep = view["status"].isin(plain) & (view["decision"].isna() | view["status"].eq("RESOLVED"))
+        if "DECIDED" in sel_status:
+            keep |= view["decision"].notna() & view["status"].isin(an.ACTIVE)
+        view = view[keep]
     stypes = st.session_state.get(f"{kind}_stype") or []
     if stypes and not view.empty:
         view = view[view["scan_type"].isin(stypes)]
@@ -343,6 +424,7 @@ def _display_frame(conn, view: pd.DataFrame, kind: str) -> pd.DataFrame:  # noqa
         pkg_rule=view["package_name"].fillna(view["rule_id"]).fillna(""),
         installed=view["installed_version"].fillna(""), fixed=view["fixed_version"].fillna("—"),
         file=view["file_path"].fillna(""), status_t=view["status"].str.title(), category_t=view["category"].str.title(),
+        decision_t=view["decision"].map(tri.DECISIONS).fillna(""),
     )
     if kind == "secret":
         metas = [_meta(conn, int(i)) for i in view["id"]]
@@ -372,7 +454,8 @@ def _columns(kind: str) -> tuple[list[str], dict[str, Any]]:
             "commit": "Commit", "source": "Found in", "location": tc("File : line", width="medium"),
             "resource": "Resource", "package_name": "Package",
             "confidence": tc("Confidence", width="small", help="How sure Bandit is that this is a real problem"),
-            "page": tc("Page / parameter", width="medium"), "address": tc("App address", width="medium")}
+            "page": tc("Page / parameter", width="medium"), "address": tc("App address", width="medium"),
+            "decision_t": tc("Decision", width="small", help="False positive, accepted risk or archived")}
     cols = {
         "all": ["identifier", "sev", "category_t", "repository", "pkg_rule", "file", "first", "status_t"],
         "vuln": ["identifier", "sev", "package_name", "installed", "fixed", "repository", "file", "first", "status_t"],
@@ -380,7 +463,7 @@ def _columns(kind: str) -> tuple[list[str], dict[str, Any]]:
         "misconf": ["identifier", "sev", "title", "file", "resource", "repository", "status_t"],
         "code": ["identifier", "sev", "confidence", "title", "location", "repository", "first", "status_t"],
         "web": ["identifier", "sev", "title", "page", "address", "repository", "first", "status_t"],
-    }[kind]
+    }[kind] + ["decision_t"]
     if kind == "secret":
         base["identifier"] = tc("Secret type / rule", width="medium")
     if kind in ("misconf", "code", "web"):
@@ -441,6 +524,7 @@ def _detail(conn, f: pd.Series, kind: str) -> None:  # noqa: ANN001
             if url:
                 html(f"<p style='margin-top:.6rem'><a href='{t.esc(url)}' target='_blank' rel='noopener noreferrer'>"
                      f"Reference ↗</a> <span style='color:#64748B;font-size:.78rem'>{t.esc(url)}</span></p>")
+        _decision_panel(conn, f)
         if f["category"] == "SECRET":
             notice("warn", "Treat as compromised if real",
                    "Revoke and rotate it at the provider first, then remove it from the code (and history if needed). "

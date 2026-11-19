@@ -8,6 +8,7 @@ from typing import Any
 import pandas as pd
 
 from database.db import get_setting
+from services.triage_service import NOT_TRIAGED
 from utils.validators import CATEGORIES, SEVERITIES
 
 ACTIVE = ("OPEN", "UNVERIFIED")
@@ -30,18 +31,30 @@ def _in(values: tuple[str, ...]) -> str:
     return ",".join(f"'{v}'" for v in values)  # constants only, never user input
 
 
+# "Open" for every count and to-do list: reported by the latest scans AND not decided by a person (false positive,
+# accepted risk, archived). Decided findings are listed separately, never silently dropped.
+_OPEN = f"f.status IN ({_in(ACTIVE)}) AND {NOT_TRIAGED}"
+
+
+def active_mask(df: pd.DataFrame) -> pd.Series:
+    """Rows of a findings_frame that count as open (reported and undecided)."""
+    if df.empty:
+        return pd.Series([], dtype=bool)
+    return df["status"].isin(ACTIVE) & df["decision"].isna()
+
+
 def overview_metrics(conn: sqlite3.Connection) -> dict[str, Any]:
     q = lambda sql, p=(): conn.execute(sql, p).fetchone()[0]  # noqa: E731
     sev = {s: 0 for s in SEVERITIES}
     for r in conn.execute(
         f"SELECT f.severity, COUNT(DISTINCT f.repository_id || ':' || f.dedup_key) FROM findings f {_ACTIVE_F} "
-        f"WHERE f.status IN ({_in(ACTIVE)}) GROUP BY f.severity"
+        f"WHERE {_OPEN} GROUP BY f.severity"
     ):
         sev[r[0]] = r[1]
     cats = {c: 0 for c in CATEGORIES}
     for r in conn.execute(
         f"SELECT f.category, COUNT(DISTINCT f.repository_id || ':' || f.dedup_key) FROM findings f {_ACTIVE_F} "
-        f"WHERE f.status IN ({_in(ACTIVE)}) GROUP BY f.category"
+        f"WHERE {_OPEN} GROUP BY f.category"
     ):
         cats[r[0]] = r[1]
     # "Failed scans" = latest run per repo/scanner/type/target that did not succeed.
@@ -59,7 +72,9 @@ def overview_metrics(conn: sqlite3.Connection) -> dict[str, Any]:
         "severity": sev,
         "category": cats,
         "unverified": q("SELECT COUNT(*) FROM findings f JOIN repositories r ON r.id=f.repository_id "
-                        "AND r.active=1 WHERE f.status='UNVERIFIED'"),
+                        f"AND r.active=1 WHERE f.status='UNVERIFIED' AND {NOT_TRIAGED}"),
+        "triaged": q(f"SELECT COUNT(*) FROM finding_triage t JOIN findings f ON f.id=t.finding_id {_ACTIVE_F} "
+                     f"WHERE f.status IN ({_in(ACTIVE)})"),
         "failed_scans_latest": latest_failed,
         "failed_scans_total": q(f"SELECT COUNT(*) FROM scan_runs s {_ACTIVE_S} WHERE s.status IN ({_in(FAILED)})"),
         "running": q("SELECT COUNT(*) FROM scan_runs WHERE status='RUNNING'"),
@@ -73,7 +88,7 @@ def findings_by_repository(conn: sqlite3.Connection) -> pd.DataFrame:
     return _df(conn, f"""
         SELECT r.name AS repository, f.severity, COUNT(DISTINCT f.dedup_key) AS findings
         FROM findings f JOIN repositories r ON r.id=f.repository_id
-        WHERE f.status IN ({_in(ACTIVE)}) AND r.active=1
+        WHERE {_OPEN} AND r.active=1
         GROUP BY r.name, f.severity""")
 
 
@@ -110,11 +125,11 @@ def repository_table(conn: sqlite3.Connection) -> pd.DataFrame:
                (SELECT SUM(duration) FROM scan_runs s WHERE s.repository_id=r.id AND s.batch_id=(
                     SELECT batch_id FROM scan_runs WHERE repository_id=r.id ORDER BY id DESC LIMIT 1)) AS last_duration,
                (SELECT COUNT(DISTINCT dedup_key) FROM findings f WHERE f.repository_id=r.id
-                  AND f.status IN ({_in(ACTIVE)}) AND f.severity='CRITICAL') AS critical,
+                  AND {_OPEN} AND f.severity='CRITICAL') AS critical,
                (SELECT COUNT(DISTINCT dedup_key) FROM findings f WHERE f.repository_id=r.id
-                  AND f.status IN ({_in(ACTIVE)}) AND f.severity='HIGH') AS high,
+                  AND {_OPEN} AND f.severity='HIGH') AS high,
                (SELECT COUNT(DISTINCT dedup_key) FROM findings f WHERE f.repository_id=r.id
-                  AND f.status IN ({_in(ACTIVE)})) AS open_findings
+                  AND {_OPEN}) AS open_findings
         FROM repositories r WHERE r.active=1 ORDER BY r.name COLLATE NOCASE""")
     if not df.empty:
         df["state"] = df["latest_statuses"].map(repository_state)
@@ -157,7 +172,7 @@ def upgrade_candidates(conn: sqlite3.Connection, limit: int = 5) -> pd.DataFrame
                MIN(CASE f.severity WHEN 'CRITICAL' THEN 0 WHEN 'HIGH' THEN 1 WHEN 'MEDIUM' THEN 2
                                    WHEN 'LOW' THEN 3 ELSE 4 END) AS worst
         FROM findings f JOIN repositories r ON r.id=f.repository_id AND r.active=1
-        WHERE f.category='VULNERABILITY' AND f.status IN ({_in(ACTIVE)})
+        WHERE f.category='VULNERABILITY' AND {_OPEN}
               AND f.fixed_version IS NOT NULL AND f.fixed_version != ''
         GROUP BY r.name, f.package_name, f.installed_version
         ORDER BY worst, advisories DESC LIMIT ?""", (limit,))
@@ -171,7 +186,7 @@ def secret_hotspots(conn: sqlite3.Connection) -> pd.DataFrame:
         SELECT r.name AS repository, f.file_path, COUNT(DISTINCT f.dedup_key) AS findings,
                MAX(CASE WHEN f.scan_type IN ('dir','fs') THEN 1 ELSE 0 END) AS in_working_tree
         FROM findings f JOIN repositories r ON r.id=f.repository_id AND r.active=1
-        WHERE f.category='SECRET' AND f.status='OPEN'
+        WHERE f.category='SECRET' AND f.status='OPEN' AND {NOT_TRIAGED}
         GROUP BY r.name, f.file_path ORDER BY findings DESC""")
 
 
@@ -180,8 +195,9 @@ def findings_frame(conn: sqlite3.Connection, repository_id: int | None = None) -
                     f.category, f.severity, f.status, f.vulnerability_id, f.rule_id, f.package_name,
                     f.installed_version, f.fixed_version, f.file_path, f.line, f.title, f.description,
                     f.remediation, f.reference_url, f.first_seen, f.last_seen, f.resolved_at, f.dedup_key,
-                    f.fingerprint
-             FROM findings f JOIN repositories r ON r.id=f.repository_id"""
+                    f.fingerprint, t.decision, t.reason AS decision_reason, t.review_by
+             FROM findings f JOIN repositories r ON r.id=f.repository_id
+             LEFT JOIN finding_triage t ON t.finding_id=f.id"""
     params: list[Any] = []
     if repository_id is not None:
         sql += " WHERE f.repository_id=?"
