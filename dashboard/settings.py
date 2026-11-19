@@ -120,10 +120,16 @@ def _browse_roots(cfg: AppConfig) -> None:
         b2.caption("Pick a folder with the Windows dialog, or type/paste paths into the box below (one per line).")
 
 
-def _dast_target(r: dict, old_login: dict) -> dict:
-    """One web-scan row from the Settings table; keeps advanced login options (field names) set in config.yaml."""
+def _dast_target(r: dict, old_login: dict, old_targets: dict | None = None) -> dict:
+    """One web-scan row from the Settings table; keeps advanced options (login field names, start wait) set in
+    config.yaml."""
+    old_targets = old_targets or {}
     repo, url = str(r.get("Project") or "").strip(), str(r.get("Address") or "").strip()
-    out: dict = {"repository": repo, "url": url}
+    out: dict = {"repository": repo, "url": url, "start_command": str(r.get("Start command") or "").strip(),
+                 "start_dir": str(r.get("Start folder") or "").strip()}
+    prev_target = old_targets.get((repo, url))
+    if prev_target is not None:
+        out["start_wait"] = prev_target.start_wait
     page = str(r.get("Login page") or "").strip()
     if page or str(r.get("Test user") or "").strip() or str(r.get("Password variable") or "").strip():
         prev = old_login.get((repo, url))
@@ -173,6 +179,12 @@ def _config_tab(cfg: AppConfig) -> None:
             trivy_types = st.multiselect("Trivy scan types", list(TRIVY_SCAN_TYPES), cfg.trivy.scan_types)
             trivy_scanners = st.multiselect("Trivy scanners", list(TRIVY_SCANNERS), cfg.trivy.scanners)
             sbom = st.checkbox("Generate CycloneDX SBOM", cfg.trivy.generate_sbom)
+            installed = st.checkbox("Also check installed library versions (.venv / venv / node_modules)",
+                                    cfg.trivy.installed_versions,
+                                    help="Libraries listed without an exact version (numpy>=1.24, streamlit) cannot "
+                                         "be matched to known flaws. This reads the exact versions installed in each "
+                                         "project's own environment (package metadata only - nothing is run) and "
+                                         "checks those.")
         with t2:
             gl_on = st.checkbox("Enable Gitleaks", cfg.gitleaks.enabled)
             gl_modes = st.multiselect("Gitleaks modes", list(GITLEAKS_MODES), cfg.gitleaks.modes,
@@ -204,18 +216,29 @@ def _config_tab(cfg: AppConfig) -> None:
                    "name, and the NAME of an environment variable that holds its password (for example "
                    "LSS_MYAPP_PASSWORD - set it with  setx LSS_MYAPP_PASSWORD \"…\"  and restart the dashboard). "
                    "The password itself is never typed here or stored.")
+        st.caption("Start command (optional): when the app is not running at scan time, the scanner starts it with "
+                   "this command in the project folder (or the start folder), waits until it answers, scans it, and "
+                   "stops it again. If the app is already running it is used as it is and never stopped.")
         old_login = {(tg.repository, tg.url): tg.login for tg in cfg.dast.targets}
+        old_targets = {(tg.repository, tg.url): tg for tg in cfg.dast.targets}
         dast_rows = st.data_editor(
-            [{"Project": tg.repository, "Address": tg.url,
+            [{"Project": tg.repository, "Address": tg.url, "Start command": tg.start_command,
+              "Start folder": tg.start_dir,
               "Login page": tg.login.url if tg.login else "", "Test user": tg.login.username if tg.login else "",
               "Password variable": tg.login.password_env if tg.login else ""} for tg in cfg.dast.targets] or
-            [{"Project": None, "Address": "", "Login page": "", "Test user": "", "Password variable": ""}],
+            [{"Project": None, "Address": "", "Start command": "", "Start folder": "", "Login page": "",
+              "Test user": "", "Password variable": ""}],
             num_rows="dynamic", width="stretch", key="dast_targets",
             column_config={
                 "Project": st.column_config.SelectboxColumn("Project", options=repo_names, required=False,
                                                             help="The project whose code serves this app"),
                 "Address": st.column_config.TextColumn("App address", help="For example http://127.0.0.1:5000/ — "
                                                        "the app must be running when the scan starts"),
+                "Start command": st.column_config.TextColumn(
+                    "Start command (optional)", help="e.g. python app.py, or .venv\\Scripts\\streamlit.exe run app.py "
+                    "--server.port 8502 --server.address 127.0.0.1. One program with arguments (no |, &, ;)."),
+                "Start folder": st.column_config.TextColumn(
+                    "Start folder (optional)", help="Folder inside the project to run it in, e.g. landing-page"),
                 "Login page": st.column_config.TextColumn("Login page (optional)",
                                                           help="e.g. http://127.0.0.1:5000/login — same app"),
                 "Test user": st.column_config.TextColumn("Test user (optional)", help="A test account, never a real one"),
@@ -247,7 +270,8 @@ def _config_tab(cfg: AppConfig) -> None:
                     follow_symlinks=follow, log_level=log_level)
         data["scan"].update(timeout_seconds=int(timeout), concurrency=int(conc), severities=sev, offline=offline,
                             db_freshness_hours=int(fresh_h), retention_days=int(retention), skip_dirs=_lines(scan_skip))
-        data["trivy"].update(enabled=trivy_on, scan_types=trivy_types, scanners=trivy_scanners, generate_sbom=sbom)
+        data["trivy"].update(enabled=trivy_on, scan_types=trivy_types, scanners=trivy_scanners, generate_sbom=sbom,
+                                installed_versions=installed)
         data["gitleaks"].update(enabled=gl_on, modes=gl_modes, config_path=gl_cfg.strip() or None,
                                 log_opts=gl_log.strip() or None)
         data["sast"] = dict(enabled=sast_on, skip_tests=[x.strip() for x in sast_skip.split(",") if x.strip()],
@@ -255,7 +279,7 @@ def _config_tab(cfg: AppConfig) -> None:
         rows = dast_rows.to_dict("records") if hasattr(dast_rows, "to_dict") else list(dast_rows)
         data["dast"] = dict(enabled=dast_on, max_pages=int(dast_pages), max_requests=int(dast_reqs),
                             request_timeout=int(dast_to),
-                            targets=[_dast_target(r, old_login) for r in rows
+                            targets=[_dast_target(r, old_login, old_targets) for r in rows
                                      if str(r.get("Address") or "").strip() or r.get("Project")])
         data["paths"].update(data_dir=data_dir.strip(), reports_dir=reports_dir.strip(), logs_dir=logs_dir.strip())
         try:

@@ -65,6 +65,8 @@ class TrivyConfig(_Strict):
     skip_dirs: list[str] = Field(default_factory=list)
     generate_sbom: bool = False
     images: dict[str, list[str]] = Field(default_factory=dict, description="repo name -> image refs")
+    installed_versions: bool = Field(True, description="Also check the exact library versions installed in each "
+                                                       "project's .venv / venv / node_modules (metadata only)")
 
     @field_validator("scan_types")
     @classmethod
@@ -188,6 +190,30 @@ class DastTarget(_Strict):
     repository: str = Field(description="Name of the project that serves this web app")
     url: str = Field(description="Address of the running app, e.g. http://127.0.0.1:5000/")
     login: DastLogin | None = Field(None, description="Optional test-account login for pages behind sign-in")
+    start_command: str = Field("", description="Optional command that starts the app when it is not running, "
+                                               "e.g. 'python app.py'; the scanner stops it again afterwards")
+    start_dir: str = Field("", description="Folder inside the project to run the start command in (default: "
+                                           "the project folder)")
+    start_wait: int = Field(60, ge=5, le=600, description="Seconds to wait for the app to answer after starting")
+
+    @field_validator("start_command")
+    @classmethod
+    def _cmd(cls, value: str) -> str:
+        value = value.strip()
+        if len(value) > 500 or "\n" in value or "\r" in value:
+            raise ValueError("Start command must be one line (max 500 characters)")
+        if re.search(r"[|&;<>`]|\$\(", value):
+            raise ValueError("Start command must be one program with arguments (no |, &, ;, <, > or backticks); "
+                             "put anything more complex in a script and start that")
+        return value
+
+    @field_validator("start_dir")
+    @classmethod
+    def _dir(cls, value: str) -> str:
+        value = value.strip().replace("\\", "/").strip("/")
+        if value and (value.startswith(("/", "~")) or ":" in value or ".." in value.split("/")):
+            raise ValueError("start_dir must be a folder inside the project, e.g. landing-page")
+        return value
 
     @model_validator(mode="after")
     def _same_app(self) -> "DastTarget":
@@ -235,6 +261,9 @@ class DastConfig(_Strict):
 
     def login_for(self, repository: str, url: str) -> DastLogin | None:
         return next((t.login for t in self.targets if t.repository == repository and t.url == url), None)
+
+    def target_for(self, repository: str, url: str) -> "DastTarget | None":
+        return next((t for t in self.targets if t.repository == repository and t.url == url), None)
 
 
 class DashboardConfig(_Strict):

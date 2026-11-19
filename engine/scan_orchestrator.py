@@ -20,6 +20,7 @@ from engine.code_scanner import CodeScanner
 from engine.comparison_engine import apply_scan_results, mark_unverified_after_failure
 from engine.dast_scanner import DastScanner
 from engine.gitleaks_scanner import GitleaksScanner
+from engine import installed_scanner
 from engine.locks import JobLock, JobLockError
 from engine.repository_discovery import DiscoveryResult, discover_repositories
 from engine.runner import CANCEL_EVENT, ScanExecution, cancel_all
@@ -170,6 +171,9 @@ class ScanOrchestrator:
             jobs += [Job("trivy", "image", img) for img in self.cfg.trivy.images.get(repo["name"], [])]
             if self.cfg.trivy.generate_sbom:
                 jobs.append(Job("trivy", "sbom"))
+            if self.cfg.trivy.installed_versions and "vuln" in self.cfg.trivy.scanners and repo.get("path"):
+                jobs += [Job("trivy", "installed", f"{kind}:{rel}")
+                         for kind, rel in installed_scanner.find_environments(Path(repo["path"]))]
         if self.cfg.gitleaks.enabled:
             jobs += [Job("gitleaks", m) for m in self.cfg.gitleaks.modes]
         if self.cfg.sast.enabled:
@@ -208,6 +212,8 @@ class ScanOrchestrator:
                 return scanner.scan_image(job.target, report, opts)
             if job.scan_type == "sbom":
                 return scanner.generate_sbom(repo_path, report, opts)
+            if job.scan_type == "installed":
+                return self._scan_installed(scanner, job, repo_path, report, opts)
         if job.scanner == "gitleaks":
             g = cfg.gitleaks
             gl_config = self._gitleaks_config(repo_path, report)
@@ -224,11 +230,87 @@ class ScanOrchestrator:
             return CodeScanner().scan(repo_path, report, cfg.scan.timeout_seconds, cfg.scan.skip_dirs,
                                       self._app_dirs_inside(repo_path))
         if job.scanner == "dast":
-            d = cfg.dast
-            return DastScanner(d.request_timeout, d.max_pages, d.max_requests).scan(
-                job.target, report, cfg.scan.timeout_seconds, self._dast_seeds(repo_id, job.target),
-                login=d.login_for(repo_name or "", job.target))
+            return self._scan_web(job, repo_path, report, repo_id, repo_name or "")
         raise ValueError(f"Unknown job {job}")
+
+    def _scan_web(self, job: Job, repo_path: Path, report: Path, repo_id: int | None, repo_name: str
+                  ) -> ScanExecution:
+        """Web scan of one address; starts the app first when a start command is configured and it is down."""
+        from engine.app_launcher import AppLauncher, LaunchError
+        from engine.finding_normalizer import Coverage
+        from utils.validators import SEVERITIES
+
+        d = self.cfg.dast
+        tgt = d.target_for(repo_name, job.target)
+
+        def run() -> ScanExecution:
+            return DastScanner(d.request_timeout, d.max_pages, d.max_requests).scan(
+                job.target, report, self.cfg.scan.timeout_seconds, self._dast_seeds(repo_id, job.target),
+                login=tgt.login if tgt else None)
+
+        if not tgt or not tgt.start_command:
+            return run()
+        cwd = (repo_path / tgt.start_dir).resolve() if tgt.start_dir else repo_path
+        if not is_within(cwd, repo_path) or not cwd.is_dir():
+            ex = ScanExecution("dast", "web", job.target, "FAILED",
+                               Coverage("dast", "web", job.target, frozenset({"WEB"}), frozenset(SEVERITIES)),
+                               error_message=f"Start folder '{tgt.start_dir}' does not exist inside the project")
+            return ex
+        from urllib.parse import urlsplit
+
+        port = str(urlsplit(job.target).port or 80)
+        launcher = AppLauncher(tgt.start_command, cwd, job.target, tgt.start_wait,
+                               self.cfg.logs_dir / "apps" / f"{_safe_name(repo_name)}_{port}.log")
+        try:
+            launcher.start()
+        except LaunchError as exc:
+            return ScanExecution("dast", "web", job.target, "FAILED",
+                                 Coverage("dast", "web", job.target, frozenset({"WEB"}), frozenset(SEVERITIES)),
+                                 error_message=f"Could not start the app: {exc}")
+        try:
+            ex = run()
+        finally:
+            launcher.stop()
+        if launcher.started or not launcher.already_running:
+            note = "The scanner started the app with its start command and stopped it after the scan."
+        else:
+            note = "The app was already running, so the start command was not used."
+        ex.error_message = f"{note} {ex.error_message}" if ex.error_message else note
+        return ex
+
+    def _scan_installed(self, scanner: TrivyScanner, job: Job, repo_path: Path, report: Path,
+                        opts: TrivyOptions) -> ScanExecution:
+        """Check the exactly installed versions of one environment (metadata only; nothing is run)."""
+        kind, rel = job.target.split(":", 1)
+        env = installed_scanner.collect(repo_path, kind, rel, self.cfg.scan.skip_dirs)
+        where = f"installed packages ({rel})"
+        note = (f"{len(env.packages)} installed package(s) in {rel} checked"
+                + (f"; {env.skipped_pinned} already pinned in requirements.txt (checked by the normal scan)"
+                   if env.skipped_pinned else "") + ".")
+        if not env.packages:
+            ex = scanner._base("installed", job.target, dataclasses.replace(opts, scanners=["vuln"]))  # noqa: SLF001
+            ex.status, ex.error_message = "COMPLETED", note
+            return ex
+        work = installed_scanner.write_manifest(env, self.cfg.data_dir / "tmp" / f"installed_{report.stem}")
+        try:
+            ex = scanner.scan_installed(work, report, opts, job.target)
+        finally:
+            import shutil
+
+            shutil.rmtree(work, ignore_errors=True)
+        for f in ex.findings:
+            f.file_path = where
+            f.metadata.update({"version_source": "installed", "environment": rel, "environment_kind": kind})
+            if f.fixed_version:
+                fix = f.fixed_version.split(",")[0].strip()
+                f.remediation = (f"Upgrade {f.package_name} from {f.installed_version} to {fix} or later in {rel}: "
+                                 + (f"pip install --upgrade \"{f.package_name}>={fix}\", then pin it in "
+                                    f"requirements.txt ({f.package_name}=={fix}) so future scans check it directly."
+                                    if kind == "python" else
+                                    f"npm install {f.package_name}@{fix}, and commit a package-lock.json."))
+        if ex.successful:
+            ex.error_message = note
+        return ex
 
     def _dast_seeds(self, repo_id: int | None, target: str) -> list[tuple[str, list[str]]]:
         """Pages of earlier, still-open web findings. They are always re-tested first, so a finding is only
@@ -344,7 +426,7 @@ class ScanOrchestrator:
             log.exception("Scanner job crashed", extra={"repo": repo["name"], "job": vars(job)})
             ex = ScanExecution(job.scanner, job.scan_type, job.target, "FAILED", None,
                                error_message=f"Internal error: {type(exc).__name__}: {exc}")
-        if ex.coverage is not None and job.scan_type not in ("image", "web") and self.cfg.scan.skip_dirs:
+        if ex.coverage is not None and job.scan_type not in ("image", "web", "installed") and self.cfg.scan.skip_dirs:
             # Record what the scan did NOT look inside, so findings there are never marked resolved.
             ex.coverage = dataclasses.replace(ex.coverage, skip_dirs=frozenset(self.cfg.scan.skip_dirs))
         summary = RunSummary(run_id, repo["name"], job.scanner, job.scan_type, job.target, ex.status,

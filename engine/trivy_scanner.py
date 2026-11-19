@@ -222,6 +222,16 @@ class TrivyScanner:
         return self._run_with_fallback(ex, lambda o: self.build_fs_command(Path("."), report, o), report, opts,
                                        cwd=target)
 
+    def scan_installed(self, work: Path, report: Path, opts: TrivyOptions, target: str) -> ScanExecution:
+        """Vulnerability scan of a generated manifest listing the exactly installed versions of one environment
+        (see engine/installed_scanner.py). ``target`` is e.g. 'python:.venv'."""
+        o = dataclasses.replace(opts, scanners=["vuln"])
+        ex = self._base("installed", target, o)
+        if not self._preflight(ex, o, needs_db=True):
+            return ex
+        return self._run_with_fallback(ex, lambda op: self.build_fs_command(Path("."), report, op), report, o,
+                                       cwd=work)
+
     def scan_config(self, target: Path, report: Path, opts: TrivyOptions) -> ScanExecution:
         ex = self._base("config", ".", opts)
         if not self._preflight(ex, opts, needs_db=False):

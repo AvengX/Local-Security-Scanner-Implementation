@@ -308,6 +308,10 @@ def _commands(cfg: AppConfig, tools: dict[str, dict]) -> list[tuple[str, str]]:
             Path("<report.json>"), exclude_patterns(cfg.scan.skip_dirs, []), cfg.sast.skip_tests)
         argv = ["<generated bandit.ini>" if a.endswith("bandit.ini") else a for a in argv]
         cmds.append(("Bandit code scan (run inside <repo-root>)", show(argv, "python")))
+    if cfg.trivy.enabled and cfg.trivy.installed_versions:
+        cmds.append(("Trivy, installed versions", "for each .venv / venv / node_modules (without a lockfile): exact "
+                     "versions read from package metadata into a temporary requirements.txt / package-lock.json, then "
+                     "trivy fs --scanners vuln on that file (packages already pinned in requirements.txt skipped)"))
     if cfg.sast.enabled and cfg.sast.other_languages:
         cmds.append(("Code scan, other languages (built in)", "pattern rules for JavaScript/TypeScript, HTML templates, "
                      "PHP, Java, Go and C#, read as text inside <repo-root> (skip folders as for Bandit)"))
@@ -955,8 +959,9 @@ def render_audit_html(d: dict) -> str:
         "CWE, dates, references, package graph) and read-only git metadata.",
     ]
     limits = [
-        "Dependency vulnerabilities are only found in manifests/lockfiles Trivy recognises. Unpinned requirements "
-        "(for example <code>numpy&gt;=1.24</code>) cannot be matched to a version and are skipped by Trivy.",
+        "Dependency vulnerabilities are found in manifests/lockfiles Trivy recognises. Unpinned requirements "
+        "(for example <code>numpy&gt;=1.24</code>) are only checked when the project has its own installed "
+        "environment (.venv / venv / node_modules), whose exact versions are then checked instead.",
         "Dependency paths and dev/runtime scope are inferred from the lockfile; packages were not installed.",
         "'Upgrade to' versions are calculated from advisory data and not verified by installing them.",
         "Severity is Trivy's label; CVSS is the severity source's v4/v3 score where available, else the highest listed.",

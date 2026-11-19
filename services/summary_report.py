@@ -26,6 +26,7 @@ CAT_LABEL = {"VULNERABILITY": "Outdated library", "SECRET": "Leaked password / k
              "WEB": "Web app problem", "MISCONFIGURATION": "Unsafe setting", "LICENSE": "Licence"}
 CHECKS = [  # (label, scanner, scan_type or None for any)
     ("Libraries with known flaws", "trivy", "fs"),
+    ("Installed library versions (.venv / node_modules)", "trivy", "installed"),
     ("Passwords and keys in files", "gitleaks", "dir"),
     ("Passwords and keys in Git history", "gitleaks", "git"),
     ("Python code", "bandit", None),

@@ -45,12 +45,12 @@ Fake credentials are generated randomly on each run, belong to no account, and a
 `vapt_lab\lab_secrets.json` only so the leak audit can search for them. Dependencies are never installed
 or executed; IaC is never deployed.
 
-## Checks (91)
+## Checks (94)
 1. **Health**: Trivy, Gitleaks and Bandit runnable, code scan for other languages and web scan built in, Trivy DB
    cached and fresh.
 2. **Discovery**: all 4 repositories found.
-3. **Scan**: `scan-all` exits 0; 30 runs (4 repos × Trivy fs/config/SBOM + Gitleaks git/dir + Bandit + code scan,
-   plus 2 web addresses) all succeed;
+3. **Scan**: `scan-all` exits 0; 32 runs (4 repos × Trivy fs/config/SBOM + Gitleaks git/dir + Bandit + code scan,
+   plus 3 web addresses and 1 installed environment) all succeed;
    tool version and DB timestamp on every run.
 4. **Detection**: specific CVEs (e.g. CVE-2023-32681 in requests, lodash CVEs), CRITICAL/HIGH present,
    misconfigurations in each IaC file (privileged pod, open security group/public S3), secrets via both
@@ -84,7 +84,7 @@ or executed; IaC is never deployed.
    app's exposed `.env` and the test account's sign-in password) anywhere in the database, raw reports, exports or logs.
 
 ## Reference run (2026-11-19, Trivy 0.76.2, Gitleaks 8.30.1, Bandit 1.9.4, code scan 1.0, DAST 1.1, Windows 11)
-91/91 PASS (incl. triage), including 7 code issues found by the built-in check in other languages and 16 web app issues
+94/94 PASS (incl. triage, installed versions and auto-start), including 7 code issues found by the built-in check in other languages and 16 web app issues
 on the unsafe lab app (one of them only reachable after signing in); 0 on the clean app.
 
 Earlier reference run (2026-11-18, DAST 1.0): 73/73 PASS.
@@ -98,3 +98,9 @@ Earlier reference run (2026-11-16, before SAST): 45/45 PASS. Highlights: 4 vulne
 ## Running against your own repositories
 After the test passes, point `repository_roots` in `config.yaml` at your project folders and run
 `python run_scan.py scan-all`, or use the dashboard. Only scan repositories you own or are authorised to assess.
+
+**Installed versions and auto-start (added 2026-11-19):** `vuln-python-app` gets a fake `.venv` (package metadata
+only) with Flask 0.12.2 — listed unpinned in `requirements.txt` — and Jinja2 2.10, which is pinned there. The check
+must find Flask's CVEs from the installed version and skip Jinja2 (no double counting). `clean-app` gets `serve.py`,
+a correctly secured app on a free port with a start command and no one starting it: the scanner must start it, scan
+it with zero findings and stop it again (port closed).

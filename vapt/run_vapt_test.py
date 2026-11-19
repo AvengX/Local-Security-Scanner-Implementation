@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import socket
 import sqlite3
 import subprocess
 import os
@@ -114,6 +115,10 @@ class Vapt:
                                   meta["secrets"]["dast_login_password"]).start()
         os.environ[LOGIN_ENV] = meta["secrets"]["dast_login_password"]  # inherited by the CLI; never in config
         self.web_clean = LabWebApp("clean").start()
+        with socket.socket() as sock:  # a free port for the app the scanner must start by itself
+            sock.bind(("127.0.0.1", 0))
+            self.auto_port = sock.getsockname()[1]
+        self.auto_url = f"http://127.0.0.1:{self.auto_port}/"
         cfg = {
             "repository_roots": [meta["targets"]],
             "paths": {"data_dir": str(self.app / "data"), "reports_dir": str(self.app / "reports"),
@@ -125,7 +130,9 @@ class Vapt:
             "dast": {"targets": [{"repository": "vuln-python-app", "url": self.web_vuln.url,
                                   "login": {"url": self.web_vuln.url + "login", "username": LOGIN_USER,
                                             "password_env": LOGIN_ENV}},
-                                 {"repository": "clean-app", "url": self.web_clean.url}]},
+                                 {"repository": "clean-app", "url": self.web_clean.url},
+                                 {"repository": "clean-app", "url": self.auto_url,
+                                  "start_command": f"{self.python} serve.py {self.auto_port}", "start_wait": 60}]},
         }
         self.cfg_path.write_text(yaml.safe_dump(cfg, sort_keys=False), encoding="utf-8")
         print(f"  lab: {meta['targets']}")
@@ -165,7 +172,8 @@ class Vapt:
                    "; ".join(f"{b['name']} {b['scanner']}:{b['scan_type']}={b['status']} {b['error_message'] or ''}"
                              for b in bad)[:400])
         total = self.q("SELECT COUNT(*) c FROM scan_runs")[0]["c"]
-        self.r.add("3 Scan", "30 scanner runs recorded (4 repos x 7 jobs + 2 web addresses)", total == 30,
+        self.r.add("3 Scan", "32 scanner runs recorded (4 repos x 7 jobs + 3 web addresses + 1 installed env)",
+                   total == 32,
                    f"{total} runs")
         meta_ok = self.q("SELECT COUNT(*) c FROM scan_runs WHERE tool_version IS NULL OR "
                          "(scanner='trivy' AND database_updated_at IS NULL)")[0]["c"] == 0
@@ -212,7 +220,7 @@ class Vapt:
                    any(r["file_path"] == "app/settings.py" for r in gl_git))
         self.r.add("4 Detection", "Secrets: history-only token NOT reported by working-tree scan",
                    not any(r["file_path"] == "app/settings.py" for r in gl_dir))
-        venv_hits = f("vuln-python-app", "file_path LIKE '%.venv%'")
+        venv_hits = f("vuln-python-app", "file_path LIKE '%.venv%' AND scan_type != 'installed'")
         self.r.add("4 Detection", "Installed-dependency folder (.venv) skipped by Trivy and Gitleaks", not venv_hits,
                    f"{len(venv_hits)} findings inside .venv")
         self.r.add("4 Detection", "Working-tree secret paths are repository-relative",
@@ -292,6 +300,25 @@ class Vapt:
         self.r.add("4 Detection", "DAST: non-local addresses are refused by the configuration",
                    refused.returncode != 0 and "limited to apps on this computer" in refused.stderr)
 
+        inst = f("vuln-python-app", "scan_type='installed'")
+        flask = [r for r in inst if (r["package_name"] or "").lower() == "flask"]
+        self.r.add("4 Detection", "Installed versions: unpinned Flask 0.12.2 in .venv checked and its CVEs found",
+                   bool(flask) and all(r["installed_version"] == "0.12.2" for r in flask),
+                   ", ".join(sorted({r["vulnerability_id"] for r in flask})))
+        note = self.q("SELECT s.error_message FROM scan_runs s JOIN repositories r ON r.id=s.repository_id WHERE "
+                      "r.name='vuln-python-app' AND s.scan_type='installed' ORDER BY s.id DESC LIMIT 1")
+        self.r.add("4 Detection", "Installed versions: Jinja2 (pinned in requirements.txt) skipped, not double-counted",
+                   not any((r["package_name"] or "").lower() == "jinja2" for r in inst)
+                   and bool(note) and "1 already pinned" in (note[0]["error_message"] or ""),
+                   note[0]["error_message"] if note else "no run")
+        auto = self.q("SELECT status, error_message FROM scan_runs WHERE scanner='dast' AND scan_target=? "
+                      "ORDER BY id DESC LIMIT 1", self.auto_url)
+        from engine.app_launcher import is_listening
+
+        self.r.add("4 Detection", "Auto-start: the scanner started the stopped app, scanned it and stopped it again",
+                   bool(auto) and auto[0]["status"] in SUCCESS and "started the app" in (auto[0]["error_message"] or "")
+                   and not is_listening(self.auto_url), (auto[0]["status"] + ": " + (auto[0]["error_message"] or ""))
+                   if auto else "no run")
         clean = f("clean-app")
         clean_runs = self.runs("clean-app")
         self.r.add("4 Detection", "Clean control repo: zero findings (no false positives)", not clean,

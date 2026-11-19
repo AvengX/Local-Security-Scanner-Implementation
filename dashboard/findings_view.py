@@ -58,13 +58,14 @@ def _web_checked(cfg, conn, empty: bool) -> None:  # noqa: ANN001
         if r is None:
             result = "Not tested yet"
         elif r["status"] == "SKIPPED":
-            result = "App was not running"
+            result = "App was not running" + ("" if tgt.start_command else " (add a start command in Settings)")
         elif r["status"] in ("COMPLETED", "COMPLETED_WITH_FINDINGS"):
             result = f"{r['findings_count']} issue(s)"
         else:
             result = r["status"].replace("_", " ").title()
         rows.append({"Project": tgt.repository, "Address": tgt.url,
                      "Signed in": ("yes" if summ and summ.get("logged_in") else "no") if tgt.login else "no login set",
+                     "Starts automatically": "yes" if tgt.start_command else "no",
                      "Last tested": fmt_ts(r["finished_at"]) if r else "—", "Result": result,
                      "Pages tested": str(summ["pages"]) if summ else "—",
                      "Requests": str(summ["requests"]) if summ else "—"})
@@ -189,6 +190,27 @@ def _what_was_checked(cfg, conn, kind: str, empty: bool) -> None:  # noqa: ANN00
     """Explain an empty page: which files Trivy could read in each project, and why nothing was found."""
     covs = repo_coverage(cfg, conn) if kind != "web" else []
     if kind == "vuln":
+        inst = conn.execute(
+            "SELECT r.name, s.scan_target, s.status, s.error_message, s.findings_count FROM scan_runs s JOIN "
+            "repositories r ON r.id=s.repository_id AND r.active=1 WHERE s.id IN (SELECT MAX(id) FROM scan_runs "
+            "WHERE scanner='trivy' AND scan_type='installed' GROUP BY repository_id, scan_target) "
+            "ORDER BY r.name, s.scan_target").fetchall()
+        if inst:
+            ok = [r for r in inst if r["status"] in ("COMPLETED", "COMPLETED_WITH_FINDINGS")]
+            if empty and ok:
+                notice("ok", "Installed library versions checked",
+                       f"{len(ok)} installed environment(s) (.venv / venv / node_modules) were checked using the exact "
+                       "versions that are installed, and no known flaw was found. See the table below.")
+            st.markdown("**Installed versions checked** (read from each project's own .venv / node_modules - also "
+                        "covers libraries listed without an exact version)")
+            st.dataframe(pd.DataFrame([{
+                "Project": r["name"], "Environment": r["scan_target"].split(":", 1)[-1],
+                "Result": (f"{r['findings_count']} known flaw(s)" if r["status"] in ("COMPLETED",
+                                                                                   "COMPLETED_WITH_FINDINGS")
+                           else r["status"].replace("_", " ").title()),
+                "Details": r["error_message"] or ""} for r in inst]), hide_index=True, width="stretch")
+            if empty and ok:
+                return
         files = [(c.repository, d) for c in covs for d in c.dependency_files]
         pinned = sum(d.pinned or 0 for _, d in files if d.checkable)
         locks = sum(1 for _, d in files if d.checkable and d.total is None)

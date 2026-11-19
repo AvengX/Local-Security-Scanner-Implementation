@@ -105,7 +105,7 @@ repository_roots: ['C:\Users\you\source\repos', 'D:\Projects']
 
 **8. Optional: prove it works on this laptop.** Open **VAPT Lab → Run VAPT test**, or run:
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\run_vapt_test.ps1   # should report 91/91 PASS
+powershell -ExecutionPolicy Bypass -File .\scripts\run_vapt_test.ps1   # should report 94/94 PASS
 ```
 
 **Every day after that:** run `.\scripts\start.ps1` and use the dashboard.
@@ -192,6 +192,13 @@ Every page answers one question. Full guide: [docs/UI_GUIDE.md](docs/UI_GUIDE.md
 
 **Vulnerabilities**: only security holes in packages your projects use (from `package-lock.json`, `requirements.txt`
 and similar), with the **installed** version and the **version that fixes it**.
+* **Installed versions:** libraries listed without an exact version (`numpy>=1.24`, or just `streamlit`) cannot be
+  matched to known flaws from the requirements file alone. When a project has its own environment (`.venv`, `venv`,
+  or `node_modules` without a lockfile), the scanner reads the exact installed versions from package metadata —
+  nothing is run or installed — and Trivy checks those. Packages already pinned in `requirements.txt` are skipped,
+  so nothing is counted twice. These findings show *installed packages (.venv)* as their location, and the fix says
+  to upgrade and then pin the version. *What was checked* lists each environment. Turn it off in Settings →
+  *Also check installed library versions*.
 
 **Secrets**: only leaked passwords, API keys and tokens.
 * **Found in** shows *Working tree* (in a file now) or *Git history* (committed in the past and still readable by anyone with the repository).
@@ -230,6 +237,13 @@ are skipped, and source code is never copied into the results.
   copied automatically), then also crawls the page shown after signing in. The password is never written to the
   config, the database, the reports or the logs. A wrong password makes the web scan *fail* (nothing is marked
   fixed). *What was tested* shows whether each address was scanned signed in.
+* **Start the app automatically:** add a *Start command* (and optionally a *Start folder*) to the address, for
+  example `python app.py`, `venv\Scripts\python.exe app.py` with start folder `landing-page`, or
+  `.venv\Scripts\streamlit.exe run app.py --server.port 8502 --server.address 127.0.0.1 --server.headless true`.
+  When nothing answers at scan time the scanner starts the app (no shell, no window, in the project folder), waits
+  until it answers (`start_wait`, default 60 s), scans it and stops the whole process tree again. An app that is
+  already running is used as it is and never stopped. The app's output goes to `logs\apps\`. If it cannot start,
+  the web scan *fails* with the reason and earlier web issues stay *Unverified*.
 * Limits: JavaScript-only apps (for example Streamlit) get the header, cookie and file checks but have few links to
   follow, and it does not replace a manual penetration test.
 
@@ -271,8 +285,8 @@ instead of claiming a clean result. Misconfigurations lists the configuration fi
 * The original Trivy, Gitleaks, Bandit, code-scan and web-scan output of each scan is also downloadable.
 
 **VAPT Lab**: a self-test for the scanner.
-* **Run VAPT test** builds 4 practice projects with planted problems (old libraries, fake keys, unsafe settings, insecure Python, JavaScript and template code, plus one clean project) and starts 2 practice web apps on 127.0.0.1 (one unsafe with a members area behind a login, one done right), scans them, and checks 91 expectations — including that every finding has a plain-language explanation and that triage decisions survive rescans.
-* Shows the result (for example 91/91), expected versus actual for every check, and past runs.
+* **Run VAPT test** builds 4 practice projects with planted problems (old libraries, fake keys, unsafe settings, insecure Python, JavaScript and template code, plus one clean project) and starts 2 practice web apps on 127.0.0.1 (one unsafe with a members area behind a login, one done right), scans them, and checks 94 expectations — including that every finding has a plain-language explanation and that triage decisions survive rescans.
+* Shows the result (for example 94/94), expected versus actual for every check, and past runs.
 * It never touches your real projects.
 
 **Settings**
@@ -426,7 +440,7 @@ randomly generated fake tokens (never real credentials) and are skipped if a too
 .\scripts\run_vapt_test.ps1 -Dashboard
 ```
 Builds a lab of intentionally vulnerable repositories, scans it with the real application and verifies
-91 PASS/FAIL checks (triage decisions, CVEs, IaC misconfigurations, secrets incl. Git history, SAST code issues in Python and other languages, DAST web issues incl. behind a login, plain-language explanations, false positives, remediation,
+94 PASS/FAIL checks (triage decisions, installed versions, auto-start, CVEs, IaC misconfigurations, secrets incl. Git history, SAST code issues in Python and other languages, DAST web issues incl. behind a login, plain-language explanations, false positives, remediation,
 offline mode, reports, secret-leak audit). Scope and details: [docs/VAPT_TEST.md](docs/VAPT_TEST.md).
 
 ### Sharing with someone else

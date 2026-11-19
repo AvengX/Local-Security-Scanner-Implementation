@@ -35,6 +35,8 @@ trivy:
   skip_dirs: []               # glob patterns passed to --skip-dirs, e.g. ['**/testdata']
   generate_sbom: false        # write a CycloneDX SBOM per repository per scan
   images: {}                  # repository name -> list of local/remote image refs, e.g. {Backend: ['backend:latest']}
+  installed_versions: true    # also check exact versions installed in each project's .venv / venv / node_modules
+                              # (package metadata only; covers libraries listed without an exact version)
 
 gitleaks:
   enabled: true
@@ -54,6 +56,9 @@ dast:                         # web scan (dynamic testing) of your own RUNNING a
   targets: []                 # only localhost / 127.0.0.1 / ::1 addresses are accepted, for example:
   #  - repository: my-flask-app         # project that serves the app (name as shown on the Repositories page)
   #    url: http://127.0.0.1:5000/      # the app must be running when the scan starts, otherwise it is skipped
+  #    start_command: python app.py     # optional: started when nothing answers, stopped again after the scan
+  #    start_dir: ''                    # optional: folder inside the project to run it in, e.g. landing-page
+  #    start_wait: 60                   # seconds to wait for the app to answer
   #    login:                           # optional: also test pages behind sign-in, with a TEST account
   #      url: http://127.0.0.1:5000/login
   #      username: test-user

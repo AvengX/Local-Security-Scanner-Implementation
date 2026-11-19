@@ -126,3 +126,23 @@ Repository Discovery Engine  (engine/repository_discovery.py)
   `analytics_service._OPEN` / `active_mask`). Reports list decided findings separately with their reasons.
 * `expire_due()` runs when the dashboard opens, after each scan batch and before the management summary; expired
   decisions are deleted and logged as EXPIRED.
+
+## Installed versions (Trivy on what is really installed)
+* `engine/installed_scanner.py`: `find_environments()` finds folders with `pyvenv.cfg` and `node_modules` folders
+  whose project has no lockfile (depth ≤ 3). Versions come from `*.dist-info/METADATA` and
+  `node_modules/**/package.json` only — nothing is imported or executed. Packages pinned exactly in a
+  `requirements.txt` are skipped. A temporary `requirements.txt` / `package-lock.json` (v3) is written to
+  `data/tmp` and scanned with `trivy fs --scanners vuln` (`TrivyScanner.scan_installed`), then deleted.
+* One job per environment: `Job("trivy", "installed", "python:.venv")`; findings keep that scan target (so each
+  environment resolves only its own findings), `file_path = "installed packages (<env>)"`, metadata
+  `version_source=installed`. Skip folders are not applied to its coverage (the environment is read on purpose).
+
+## Auto-start for the web scan
+* `engine/app_launcher.py`: `AppLauncher(command, cwd, url, wait, log)`. If the port already answers nothing is
+  started or stopped. Otherwise the command (validated: one program with arguments, no shell operators) is split,
+  the program resolved inside the project folder or on PATH, and started without a shell or window, output to
+  `logs/apps/`. It waits for the port (honouring cancellation), fails if the process exits or never answers, and
+  `stop()` kills the process tree (`taskkill /T /F`) and waits for the port to close.
+* `ScanOrchestrator._scan_web` wraps the DAST scan in the launcher when `dast.targets[].start_command` is set;
+  `start_dir` must stay inside the project. A launch failure is a FAILED run with coverage (findings become
+  UNVERIFIED, never resolved).

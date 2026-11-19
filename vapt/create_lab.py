@@ -82,6 +82,32 @@ function findUser(db, name) {
   return db.query('SELECT * FROM users WHERE name = ?', [name]);
 }
 """
+# A tiny, correctly secured app the scanner has to START itself (auto-start check). Standard library only.
+CLEAN_SERVE = """import sys
+from http.server import BaseHTTPRequestHandler, HTTPServer
+
+
+class Handler(BaseHTTPRequestHandler):
+    server_version = "Server"
+    sys_version = ""
+
+    def log_message(self, *args):
+        pass
+
+    def do_GET(self):
+        body = b"<!doctype html><html><head><title>Started app</title></head><body>Hello</body></html>"
+        self.send_response(200 if self.path == "/" else 404)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Security-Policy", "default-src 'self'")
+        self.send_header("X-Frame-Options", "DENY")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+
+HTTPServer(("127.0.0.1", int(sys.argv[1])), Handler).serve_forever()
+"""
 CLEAN_TEMPLATE = """<!doctype html>
 <html><head><script src="/static/clean.js"></script></head>
 <body><h1>{{ title }}</h1><a href="https://example.com" target="_blank" rel="noopener noreferrer">Docs</a></body></html>
@@ -221,7 +247,7 @@ def create_lab(lab_dir: Path) -> dict[str, object]:
 
     # 1. Python app: CVEs in pinned deps + secret in working tree + secret only in Git history.
     py = _new_repo(targets, "vuln-python-app", {
-        "requirements.txt": "requests==2.25.0\nurllib3==1.26.4\nPyYAML==5.3\nJinja2==2.10\n",
+        "requirements.txt": "requests==2.25.0\nurllib3==1.26.4\nPyYAML==5.3\nJinja2==2.10\nFlask>=0.12\n",
         "app/settings.py": f'GITHUB_TOKEN = "{s["github_pat_history"]}"\nDEBUG = True\n',
     }, "add app")
     _write(py, {"app/settings.py": "import os\nGITHUB_TOKEN = os.environ.get('GITHUB_TOKEN')\nDEBUG = False\n"})
@@ -236,7 +262,14 @@ def create_lab(lab_dir: Path) -> dict[str, object]:
     # Untracked installed-dependency folder (as a real virtualenv would be): must be skipped by scans.
     _write(py, {".gitignore": ".venv/\n",
                 ".venv/Lib/site-packages/thirdparty/config.py": (f'TOKEN = "{s["github_pat_venv"]}"\n'
-                                                                  "import pickle\nDATA = pickle.loads(b'')\n")})
+                                                                  "import pickle\nDATA = pickle.loads(b'')\n"),
+                # Package metadata of a virtualenv: Flask is listed without a version in requirements.txt, so only
+                # the installed-versions check can find its flaws. Jinja2 is pinned there and must be skipped here.
+                ".venv/pyvenv.cfg": "home = C:\\Python\nversion = 3.12.0\n",
+                ".venv/Lib/site-packages/flask-0.12.2.dist-info/METADATA": "Metadata-Version: 2.1\nName: Flask\n"
+                                                                          "Version: 0.12.2\n",
+                ".venv/Lib/site-packages/jinja2-2.10.dist-info/METADATA": "Metadata-Version: 2.1\nName: Jinja2\n"
+                                                                          "Version: 2.10\n"})
 
     # 2. Node app: vulnerable lodash / minimist in package-lock.json.
     _new_repo(targets, "vuln-node-app", {
@@ -255,7 +288,7 @@ def create_lab(lab_dir: Path) -> dict[str, object]:
     _new_repo(targets, "clean-app", {
         "main.py": "def add(a: int, b: int) -> int:\n    return a + b\n",
         "README.md": "# Clean control repository\n",
-        "static/clean.js": CLEAN_JS, "templates/index.html": CLEAN_TEMPLATE,
+        "static/clean.js": CLEAN_JS, "templates/index.html": CLEAN_TEMPLATE, "serve.py": CLEAN_SERVE,
     })
 
     meta = {"targets": str(targets), "secrets": s}

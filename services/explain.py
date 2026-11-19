@@ -443,8 +443,14 @@ def explain(f: Mapping[str, Any]) -> Explanation:
                 f", which has a publicly known security flaw ({vid or 'advisory'}).")
         if title:
             what += f" The advisory describes it as: “{title[:160]}”."
+        installed = meta.get("version_source") == "installed"
+        if installed:
+            what += (f" The version was read from what is installed in {meta.get('environment')}, because the "
+                     "project does not pin it.")
         steps = ([f"Update {pkg} to version {fixed.split(',')[0].strip()} or newer in "
-                  f"{_s(f.get('file_path')) or 'your dependency file'}.",
+                  + (f"the project's installed environment ({meta.get('environment')}), and write that exact "
+                     "version into requirements.txt / package-lock.json so it stays pinned."
+                     if installed else f"{_s(f.get('file_path')) or 'your dependency file'}."),
                   "Re-install the dependencies (for example pip install -r requirements.txt) and run your tests.",
                   RESCAN] if fixed else
                  [f"No fixed version of {pkg} has been published yet.",
