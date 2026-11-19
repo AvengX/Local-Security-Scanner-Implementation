@@ -5,9 +5,10 @@ from __future__ import annotations
 import re
 from pathlib import Path
 from typing import Literal
+from urllib.parse import urlsplit
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from utils import validators as v
 from utils.paths import EXAMPLE_CONFIG_PATH, config_path, resolve_app_path
@@ -25,7 +26,7 @@ DEFAULT_SCAN_SKIP_DIRS: list[str] = [
 
 
 class _Strict(BaseModel):
-    model_config = ConfigDict(extra="forbid", validate_assignment=True)
+    model_config = ConfigDict(extra="forbid", validate_assignment=True, hide_input_in_errors=True)  # never echo a mistyped secret
 
 
 class PathsConfig(_Strict):
@@ -124,6 +125,8 @@ class SastConfig(_Strict):
     enabled: bool = True
     skip_tests: list[str] = Field(default_factory=list,
                                   description="Bandit check IDs to skip everywhere, e.g. ['B101'] for assert")
+    other_languages: bool = Field(True, description="Also run the built-in code scan for JavaScript/TypeScript, "
+                                                    "HTML templates, PHP, Java, Go and C#")
 
     @field_validator("skip_tests")
     @classmethod
@@ -135,9 +138,65 @@ class SastConfig(_Strict):
         return list(dict.fromkeys(cleaned))
 
 
+class DastLogin(_Strict):
+    """Optional login so the web scan can also test pages behind a sign-in form.
+
+    Only the NAME of an environment variable holding the password is stored, never the password itself.
+    Use a test account: the scan sends one POST (the login form) and otherwise only GET requests."""
+
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)  # a mistyped password is never echoed
+
+    url: str = Field(description="Address of the login page, on the same app, e.g. http://127.0.0.1:5000/login")
+    username: str = Field(description="Test account user name or e-mail")
+    password_env: str = Field(description="Name of the environment variable that holds the test password")
+    username_field: str = Field("", description="Name of the user-name input; empty = detect automatically")
+    password_field: str = Field("", description="Name of the password input; empty = detect automatically")
+    logged_in_text: str = Field("", description="Text that only appears when logged in (optional check)")
+
+    @field_validator("url")
+    @classmethod
+    def _url(cls, value: str) -> str:
+        return v.validate_dast_url(value)
+
+    @field_validator("username")
+    @classmethod
+    def _user(cls, value: str) -> str:
+        value = value.strip()
+        if not value or len(value) > 200:
+            raise ValueError("Login user name is required (max 200 characters)")
+        return value
+
+    @field_validator("password_env")
+    @classmethod
+    def _env(cls, value: str) -> str:
+        value = value.strip()
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,63}", value):
+            raise ValueError("password_env must be an environment variable NAME such as LSS_APP_PASSWORD "
+                             "(letters, digits, underscore) - never the password itself")
+        return value
+
+    @field_validator("username_field", "password_field")
+    @classmethod
+    def _field(cls, value: str) -> str:
+        value = value.strip()
+        if value and not re.fullmatch(r"[\w.\[\]-]{1,100}", value):
+            raise ValueError(f"Invalid form field name: {value!r}")
+        return value
+
+
 class DastTarget(_Strict):
     repository: str = Field(description="Name of the project that serves this web app")
     url: str = Field(description="Address of the running app, e.g. http://127.0.0.1:5000/")
+    login: DastLogin | None = Field(None, description="Optional test-account login for pages behind sign-in")
+
+    @model_validator(mode="after")
+    def _same_app(self) -> "DastTarget":
+        if self.login is not None:
+            a, b = urlsplit(self.url), urlsplit(self.login.url)
+            if (a.scheme, a.netloc) != (b.scheme, b.netloc):
+                raise ValueError(f"The login page must be on the same app as {self.url} "
+                                 f"(same http/https, host and port)")
+        return self
 
     @field_validator("repository")
     @classmethod
@@ -173,6 +232,9 @@ class DastConfig(_Strict):
 
     def targets_for(self, repository: str) -> list[str]:
         return [t.url for t in self.targets if t.repository == repository]
+
+    def login_for(self, repository: str, url: str) -> DastLogin | None:
+        return next((t.login for t in self.targets if t.repository == repository and t.url == url), None)
 
 
 class DashboardConfig(_Strict):

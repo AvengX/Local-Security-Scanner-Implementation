@@ -193,6 +193,13 @@ def trivy_db_freshness(cache_dir: str | None, threshold_hours: int) -> DbFreshne
                        {"schema_version": meta.get("Version")})
 
 
+def check_codescan() -> ToolStatus:
+    """The code scan for other languages is built into the scanner: nothing to install, always runnable."""
+    from engine.code_scanner import ENGINE_VERSION
+
+    return ToolStatus("codescan", True, path="built-in", version=ENGINE_VERSION, usable=True)
+
+
 def check_dast() -> ToolStatus:
     """The web scan (DAST) is built into the scanner: nothing to install, always runnable."""
     from engine.dast_scanner import ENGINE_VERSION

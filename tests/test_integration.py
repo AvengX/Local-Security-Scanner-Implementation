@@ -348,7 +348,7 @@ def test_sast_job_runs_and_resolves_fixed_code(cfg, roots: Path) -> None:
     conn = init_db(cfg.db_path)
     target = dao.list_repositories(conn)[0]
     runs = orch.scan_repository(target)
-    assert [(r.scanner, r.status) for r in runs] == [("bandit", "COMPLETED_WITH_FINDINGS")]
+    assert [(r.scanner, r.status) for r in runs] == [("bandit", "COMPLETED_WITH_FINDINGS"), ("codescan", "COMPLETED")]
     rows = conn.execute("SELECT rule_id, file_path, status FROM findings WHERE category='CODE'").fetchall()
     assert ("B602", "app.py", "OPEN") in [tuple(r) for r in rows]
     assert all(".venv" not in r["file_path"] for r in rows)

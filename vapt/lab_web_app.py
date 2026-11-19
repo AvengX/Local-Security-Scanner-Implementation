@@ -4,7 +4,8 @@
   redirect, simulated path traversal (returns a fake passwd line, never reads real files), exposed .env, directory
   listing, a fake Werkzeug debugger console, a stack-trace page, an over-permissive CORS policy, a cookie without
   flags and a version-revealing Server header. It also has /logout and /delete-account links that a safe scanner
-  must never follow (hits are counted).
+  must never follow (hits are counted). A members area behind /login (CSRF-protected sign-in form) has its own
+  reflected XSS at /account/notes, so only a scan that logs in can find it.
 * ``clean``: the same shape done right, so the scan must report nothing (false-positive control).
 
 Standard library only; nothing here is reachable from other machines.
@@ -13,6 +14,7 @@ Standard library only; nothing here is reachable from other machines.
 from __future__ import annotations
 
 import html
+import secrets
 import sqlite3
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -32,12 +34,19 @@ CLEAN_HOME = """<!doctype html><html><head><title>Clean app</title></head><body>
 <form action="/search" method="get"><input name="q"></form></body></html>"""
 
 
+LOGIN_USER = "lab-tester"
+
+
 class LabState:
-    def __init__(self, env_secret: str) -> None:
+    def __init__(self, env_secret: str, login_password: str = "") -> None:
         self.env_secret = env_secret
+        self.login_password = login_password or secrets.token_urlsafe(12)
         self.xss_fixed = False
         self.destructive_hits = 0
-        self.post_hits = 0
+        self.post_hits = 0          # POSTs other than the sign-in form: a safe scan sends none
+        self.login_posts = 0
+        self.sessions: set[str] = set()
+        self.csrf = secrets.token_hex(8)
 
 
 def _handler(kind: str, state: LabState) -> type[BaseHTTPRequestHandler]:
@@ -75,8 +84,33 @@ def _handler(kind: str, state: LabState) -> type[BaseHTTPRequestHandler]:
             self.wfile.write(data)
 
         def do_POST(self) -> None:  # noqa: N802
+            if kind == "vulnerable" and urlsplit(self.path).path == "/login":
+                state.login_posts += 1
+                size = min(int(self.headers.get("Content-Length") or 0), 10_000)
+                form = {k: v[0] for k, v in parse_qs(self.rfile.read(size).decode("utf-8", "replace")).items()}
+                if (form.get("csrf_token") == state.csrf and form.get("username") == LOGIN_USER
+                        and form.get("password") == state.login_password):
+                    token = secrets.token_hex(12)
+                    state.sessions.add(token)
+                    return self._send(302, "", extra={"Location": "/account",
+                                                      "Set-Cookie": f"auth={token}; HttpOnly; SameSite=Lax; Path=/"})
+                return self._send(200, self._login_page("Wrong user name or password"))
             state.post_hits += 1
             self._send(405, "no")
+
+        def _login_page(self, msg: str = "") -> str:
+            return ("<html><body><h1>Sign in</h1>" + (f"<p>{msg}</p>" if msg else "") +
+                    "<form action='/login' method='post'>"
+                    f"<input type='hidden' name='csrf_token' value='{state.csrf}'>"
+                    "<input type='text' name='username'><input type='password' name='password'>"
+                    "<input type='submit' value='Sign in'></form></body></html>")
+
+        def _logged_in(self) -> bool:
+            for part in (self.headers.get("Cookie") or "").split(";"):
+                name, _, value = part.strip().partition("=")
+                if name == "auth" and value in state.sessions:
+                    return True
+            return False
 
         def do_GET(self) -> None:  # noqa: N802
             u = urlsplit(self.path)
@@ -100,6 +134,17 @@ def _handler(kind: str, state: LabState) -> type[BaseHTTPRequestHandler]:
                 return self._send(200, "<html><body>done</body></html>")
             if path == "/":
                 return self._send(200, VULN_HOME, extra={"Set-Cookie": "session=lab123; Path=/"})
+            if path == "/login":
+                return self._send(200, self._login_page())
+            if path.startswith("/account"):
+                if not self._logged_in():
+                    return self._send(302, "", extra={"Location": "/login"})
+                if path == "/account":
+                    return self._send(200, "<html><body><h1>My account</h1><p>Signed in as lab-tester</p>"
+                                           "<a href='/account/notes?q=hello'>My notes</a> "
+                                           "<a href='/logout'>Log out</a></body></html>")
+                if path == "/account/notes":  # reflected XSS that only a logged-in scan can reach
+                    return self._send(200, f"<html><body>Notes matching {q.get('q', '')}</body></html>")
             if path == "/search":
                 term = q.get("q", "")
                 shown = html.escape(term) if state.xss_fixed else term
@@ -137,8 +182,8 @@ def _handler(kind: str, state: LabState) -> type[BaseHTTPRequestHandler]:
 class LabWebApp:
     """Start/stop one lab app on a free 127.0.0.1 port in a background thread."""
 
-    def __init__(self, kind: str, env_secret: str = "unused") -> None:
-        self.state = LabState(env_secret)
+    def __init__(self, kind: str, env_secret: str = "unused", login_password: str = "") -> None:
+        self.state = LabState(env_secret, login_password)
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), _handler(kind, self.state))
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
 

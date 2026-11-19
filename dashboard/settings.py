@@ -120,6 +120,19 @@ def _browse_roots(cfg: AppConfig) -> None:
         b2.caption("Pick a folder with the Windows dialog, or type/paste paths into the box below (one per line).")
 
 
+def _dast_target(r: dict, old_login: dict) -> dict:
+    """One web-scan row from the Settings table; keeps advanced login options (field names) set in config.yaml."""
+    repo, url = str(r.get("Project") or "").strip(), str(r.get("Address") or "").strip()
+    out: dict = {"repository": repo, "url": url}
+    page = str(r.get("Login page") or "").strip()
+    if page or str(r.get("Test user") or "").strip() or str(r.get("Password variable") or "").strip():
+        prev = old_login.get((repo, url))
+        out["login"] = {**(prev.model_dump() if prev else {}), "url": page,
+                        "username": str(r.get("Test user") or "").strip(),
+                        "password_env": str(r.get("Password variable") or "").strip()}
+    return out
+
+
 def _config_tab(cfg: AppConfig) -> None:
     if "roots_sync" in st.session_state:  # set after save/reset, applied before the widget is created
         st.session_state["roots_text"] = st.session_state.pop("roots_sync")
@@ -172,6 +185,11 @@ def _config_tab(cfg: AppConfig) -> None:
                                    "shell=True or pickle. Reads the code only; never runs it.")
         sast_skip = c2.text_input("Bandit checks to skip (comma-separated)", ", ".join(cfg.sast.skip_tests),
                                   placeholder="B101", help="For example B101 (assert statements)")
+        sast_other = st.checkbox("Also check JavaScript/TypeScript, HTML templates, PHP, Java, Go and C#",
+                                 cfg.sast.other_languages,
+                                 help="Built-in check for the most common risky patterns in those languages "
+                                      "(eval, innerHTML, SQL built from strings, TLS checks turned off, |safe in "
+                                      "templates, …). Reads files only; nothing to install.")
 
         section("Web scan (DAST)", "tests your running apps through their address · apps on this computer only")
         dast_on = st.checkbox("Enable web scan (DAST)", cfg.dast.enabled,
@@ -182,15 +200,27 @@ def _config_tab(cfg: AppConfig) -> None:
                                    "127.0.0.1 addresses are allowed.")
         repo_names = [r[0] for r in get_conn(cfg).execute(
             "SELECT name FROM repositories WHERE active=1 ORDER BY name COLLATE NOCASE").fetchall()]
+        st.caption("Optional login: to also test pages behind sign-in, fill in the login page, a TEST account's user "
+                   "name, and the NAME of an environment variable that holds its password (for example "
+                   "LSS_MYAPP_PASSWORD - set it with  setx LSS_MYAPP_PASSWORD \"…\"  and restart the dashboard). "
+                   "The password itself is never typed here or stored.")
+        old_login = {(tg.repository, tg.url): tg.login for tg in cfg.dast.targets}
         dast_rows = st.data_editor(
-            [{"Project": tg.repository, "Address": tg.url} for tg in cfg.dast.targets] or
-            [{"Project": None, "Address": ""}],
+            [{"Project": tg.repository, "Address": tg.url,
+              "Login page": tg.login.url if tg.login else "", "Test user": tg.login.username if tg.login else "",
+              "Password variable": tg.login.password_env if tg.login else ""} for tg in cfg.dast.targets] or
+            [{"Project": None, "Address": "", "Login page": "", "Test user": "", "Password variable": ""}],
             num_rows="dynamic", width="stretch", key="dast_targets",
             column_config={
                 "Project": st.column_config.SelectboxColumn("Project", options=repo_names, required=False,
                                                             help="The project whose code serves this app"),
                 "Address": st.column_config.TextColumn("App address", help="For example http://127.0.0.1:5000/ — "
                                                        "the app must be running when the scan starts"),
+                "Login page": st.column_config.TextColumn("Login page (optional)",
+                                                          help="e.g. http://127.0.0.1:5000/login — same app"),
+                "Test user": st.column_config.TextColumn("Test user (optional)", help="A test account, never a real one"),
+                "Password variable": st.column_config.TextColumn(
+                    "Password variable (optional)", help="NAME of the environment variable holding the test password"),
             })
         w1, w2, w3 = st.columns(3)
         dast_pages = w1.number_input("Pages per address", 1, 500, cfg.dast.max_pages)
@@ -220,13 +250,13 @@ def _config_tab(cfg: AppConfig) -> None:
         data["trivy"].update(enabled=trivy_on, scan_types=trivy_types, scanners=trivy_scanners, generate_sbom=sbom)
         data["gitleaks"].update(enabled=gl_on, modes=gl_modes, config_path=gl_cfg.strip() or None,
                                 log_opts=gl_log.strip() or None)
-        data["sast"] = dict(enabled=sast_on, skip_tests=[x.strip() for x in sast_skip.split(",") if x.strip()])
+        data["sast"] = dict(enabled=sast_on, skip_tests=[x.strip() for x in sast_skip.split(",") if x.strip()],
+                            other_languages=sast_other)
         rows = dast_rows.to_dict("records") if hasattr(dast_rows, "to_dict") else list(dast_rows)
         data["dast"] = dict(enabled=dast_on, max_pages=int(dast_pages), max_requests=int(dast_reqs),
                             request_timeout=int(dast_to),
-                            targets=[{"repository": str(r.get("Project") or "").strip(),
-                                      "url": str(r.get("Address") or "").strip()}
-                                     for r in rows if str(r.get("Address") or "").strip() or r.get("Project")])
+                            targets=[_dast_target(r, old_login) for r in rows
+                                     if str(r.get("Address") or "").strip() or r.get("Project")])
         data["paths"].update(data_dir=data_dir.strip(), reports_dir=reports_dir.strip(), logs_dir=logs_dir.strip())
         try:
             new_cfg = AppConfig.model_validate(data)

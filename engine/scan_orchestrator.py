@@ -16,6 +16,7 @@ from typing import Any
 
 from database import repositories as dao
 from database.db import connect, get_setting, init_db, set_setting, utcnow
+from engine.code_scanner import CodeScanner
 from engine.comparison_engine import apply_scan_results, mark_unverified_after_failure
 from engine.dast_scanner import DastScanner
 from engine.gitleaks_scanner import GitleaksScanner
@@ -173,6 +174,8 @@ class ScanOrchestrator:
             jobs += [Job("gitleaks", m) for m in self.cfg.gitleaks.modes]
         if self.cfg.sast.enabled:
             jobs.append(Job("bandit", "python"))
+            if self.cfg.sast.other_languages:
+                jobs.append(Job("codescan", "multi"))
         if self.cfg.dast.enabled:
             jobs += [Job("dast", "web", url) for url in self.cfg.dast.targets_for(repo["name"])]
         return jobs
@@ -186,7 +189,7 @@ class ScanOrchestrator:
         return folder / f"{stamp}_{job.scanner}_{job.scan_type}{tgt}_run{run_id}.{ext}"
 
     def _run_job(self, job: Job, repo_path: Path, report: Path, offline: bool,
-                 repo_id: int | None = None) -> ScanExecution:
+                 repo_id: int | None = None, repo_name: str | None = None) -> ScanExecution:
         cfg = self.cfg
         if job.scanner == "trivy":
             opts = TrivyOptions.from_config(cfg, offline=offline)
@@ -217,10 +220,14 @@ class ScanOrchestrator:
         if job.scanner == "bandit":
             excludes = exclude_patterns(cfg.scan.skip_dirs, self._app_dirs_inside(repo_path))
             return self.bandit.scan(repo_path, report, cfg.scan.timeout_seconds, excludes, cfg.sast.skip_tests)
+        if job.scanner == "codescan":
+            return CodeScanner().scan(repo_path, report, cfg.scan.timeout_seconds, cfg.scan.skip_dirs,
+                                      self._app_dirs_inside(repo_path))
         if job.scanner == "dast":
             d = cfg.dast
             return DastScanner(d.request_timeout, d.max_pages, d.max_requests).scan(
-                job.target, report, cfg.scan.timeout_seconds, self._dast_seeds(repo_id, job.target))
+                job.target, report, cfg.scan.timeout_seconds, self._dast_seeds(repo_id, job.target),
+                login=d.login_for(repo_name or "", job.target))
         raise ValueError(f"Unknown job {job}")
 
     def _dast_seeds(self, repo_id: int | None, target: str) -> list[tuple[str, list[str]]]:
@@ -332,7 +339,7 @@ class ScanOrchestrator:
                                      os.getpid())
         report = self._report_path(repo, job, run_id)
         try:
-            ex = self._run_job(job, repo_path, report, offline, repo["id"])
+            ex = self._run_job(job, repo_path, report, offline, repo["id"], repo["name"])
         except Exception as exc:  # noqa: BLE001 - one job must not break the batch
             log.exception("Scanner job crashed", extra={"repo": repo["name"], "job": vars(job)})
             ex = ScanExecution(job.scanner, job.scan_type, job.target, "FAILED", None,

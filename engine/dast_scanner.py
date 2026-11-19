@@ -7,7 +7,9 @@ debug pages, error pages that leak internals, and simple injection flaws.
 Safety rules (enforced here, not only in the configuration):
 * Only loopback addresses (localhost, 127.0.0.0/8, ::1) are contacted; every request re-checks the host.
 * Only GET requests (plus one TRACE probe) are sent. Forms are filled in only when they use GET; POST, PUT and
-  DELETE are never sent, so stored data is not changed.
+  DELETE are never sent, so stored data is not changed. The one exception is an optional, configured login:
+  exactly one POST to the app's own sign-in form with a test account, whose password is read from an
+  environment variable at scan time and never written anywhere.
 * Links that look destructive (logout, delete, reset, …) are not followed.
 * Redirects are never followed automatically and never leave the target; no proxy is used.
 * Response bodies are never stored. Exposed files are recognised by a signature and only their size is kept.
@@ -17,10 +19,12 @@ Safety rules (enforced here, not only in the configuration):
 from __future__ import annotations
 
 import json
+import os
 import re
 import secrets
 import ssl
 import time
+import http.cookiejar
 import urllib.error
 import urllib.request
 from collections import deque
@@ -43,7 +47,7 @@ log = get_logger(__name__)
 SCANNER = "dast"
 SCAN_TYPE = "web"
 CATEGORY = "WEB"
-ENGINE_VERSION = "1.0"
+ENGINE_VERSION = "1.1"
 MAX_BODY = 1_000_000
 USER_AGENT = "LocalSecurityScanner-DAST/1.0 (local test)"
 OWASP = "https://owasp.org/www-project-top-ten/"
@@ -237,8 +241,10 @@ class Client:
         # Local development servers usually use self-signed certificates; only loopback hosts are ever contacted.
         ctx.check_hostname = False
         ctx.verify_mode = ssl.CERT_NONE
+        self.cookies = http.cookiejar.CookieJar()  # in memory only; keeps a login session during one scan
         self.opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirect(),
-                                                  urllib.request.HTTPSHandler(context=ctx))
+                                                  urllib.request.HTTPSHandler(context=ctx),
+                                                  urllib.request.HTTPCookieProcessor(self.cookies))
         self.timeout = timeout
         self.max_requests = max_requests
         self.deadline = deadline
@@ -246,7 +252,7 @@ class Client:
         self.errors = 0
 
     def request(self, url: str, method: str = "GET", headers: dict[str, str] | None = None,
-                raise_unreachable: bool = False) -> Response | None:
+                raise_unreachable: bool = False, data: bytes | None = None) -> Response | None:
         if CANCEL_EVENT.is_set():
             raise _Stop("CANCELLED", "Scan cancelled")
         if time.monotonic() > self.deadline:
@@ -257,7 +263,10 @@ class Client:
         if parts.scheme not in ("http", "https") or not is_loopback_host(parts.hostname):
             raise ValueError(f"Refusing to contact a non-local address: {parts.hostname}")
         self.count += 1
-        req = urllib.request.Request(url, method=method, headers={"User-Agent": USER_AGENT, **(headers or {})})
+        if method not in ("GET", "TRACE") and not (method == "POST" and getattr(self, "_login_post", False)):
+            raise ValueError(f"The web scan never sends {method} requests")
+        req = urllib.request.Request(url, method=method, data=data,
+                                     headers={"User-Agent": USER_AGENT, **(headers or {})})
         try:
             with self.opener.open(req, timeout=self.timeout) as r:  # noqa: S310 - loopback http(s) only
                 return Response(r.status, r.headers, r.read(MAX_BODY), url)
@@ -272,6 +281,34 @@ class Client:
                 raise Unreachable(str(getattr(e, "reason", e))) from e
             self.errors += 1
             return None
+
+
+class _LoginForm(HTMLParser):
+    """The first form on a page that has a password input: its action, method and every input (name, type, value)."""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.forms: list[dict[str, Any]] = []
+        self._cur: dict[str, Any] | None = None
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        a = {k.lower(): (v or "") for k, v in attrs}
+        if tag == "form":
+            self._cur = {"action": a.get("action", ""), "method": (a.get("method") or "get").lower(), "inputs": []}
+            self.forms.append(self._cur)
+        elif tag in ("input", "select", "textarea") and self._cur is not None and a.get("name"):
+            self._cur["inputs"].append((a["name"], (a.get("type") or "text").lower(), a.get("value", "")))
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag == "form":
+            self._cur = None
+
+    def login_form(self) -> dict[str, Any] | None:
+        return next((f for f in self.forms if any(t == "password" for _, t, _ in f["inputs"])), None)
+
+
+def _has_password_input(text: str) -> bool:
+    return re.search(r"(?i)<input\b[^>]*type\s*=\s*['\"]?password", text) is not None
 
 
 class _Links(HTMLParser):
@@ -319,6 +356,8 @@ class _State:
     pages: list[str] = field(default_factory=list)
     cookies_seen: set[str] = field(default_factory=set)
     target: str = ""
+    logged_in: bool = False
+    landing: "_Page | None" = None   # page shown after signing in: crawled too, so the members area is reached
 
 
 def _clean_path(path: str) -> str:
@@ -516,8 +555,75 @@ class DastScanner:
         return resp
 
     # ------------------------------------------------------------------ entry point
-    def scan(self, target: str, report: Path, time_limit: int, seeds: list[tuple[str, list[str]]] | None = None
-             ) -> ScanExecution:
+    def _login(self, st: _State, client: Client, login: Any) -> None:
+        """Sign in with the configured test account (one POST to the app's own login form).
+
+        Raises _Stop("FAILED", reason) when the login cannot be done; reasons never contain the password."""
+        password = os.environ.get(login.password_env)
+        if not password:
+            raise _Stop("FAILED", f"Login not possible: the environment variable {login.password_env} is not set. "
+                                  "Set it to the test account's password, then scan again.")
+        page = client.request(login.url, raise_unreachable=True)
+        assert page is not None
+        parser = _LoginForm()
+        try:
+            parser.feed(page.text)
+        except Exception:  # noqa: BLE001
+            pass
+        form = parser.login_form()
+        if form is None:
+            raise _Stop("FAILED", f"Login not possible: no form with a password box was found at {login.url}.")
+        action = urljoin(page.url, form["action"] or page.url)
+        a = urlsplit(action)
+        if f"{a.scheme}://{a.netloc}" != st.origin:
+            raise _Stop("FAILED", "Login not possible: the login form sends the password to a different site.")
+        user_field = login.username_field or next(
+            (n for n, t, _ in form["inputs"] if t in ("text", "email") or n.lower() in ("username", "user", "email",
+                                                                                     "login")), "")
+        pass_field = login.password_field or next((n for n, t, _ in form["inputs"] if t == "password"), "")
+        if not user_field or not pass_field:
+            raise _Stop("FAILED", "Login not possible: the user-name or password box could not be identified; set "
+                                  "username_field / password_field in the web scan settings.")
+        fields: list[tuple[str, str]] = []
+        for name, kind, value in form["inputs"]:
+            if name == user_field:
+                fields.append((name, login.username))
+            elif name == pass_field:
+                fields.append((name, password))
+            elif kind in ("hidden", "checkbox") or (kind == "submit" and value):
+                fields.append((name, value))  # CSRF tokens and similar
+        client._login_post = True  # noqa: SLF001 - the only POST the scan may send
+        try:
+            resp = client.request(action, method=form["method"].upper() if form["method"] == "post" else "POST",
+                                  headers={"Content-Type": "application/x-www-form-urlencoded",
+                                           "Referer": page.url},
+                                  data=urlencode(fields).encode("utf-8"))
+        finally:
+            client._login_post = False  # noqa: SLF001
+        del password, fields
+        for _ in range(5):  # follow the post-login redirect with GET, inside the app only
+            if resp is None or not (300 <= resp.status < 400 and resp.headers.get("Location")):
+                break
+            nxt = urljoin(resp.url, resp.headers["Location"])
+            if not self._in_scope(st, nxt):
+                break
+            resp = client.request(nxt)
+        if resp is None or resp.status >= 400:
+            raise _Stop("FAILED", "Login failed: the app rejected the sign-in"
+                                  + (f" (HTTP {resp.status})." if resp is not None else " (no answer)."))
+        if login.logged_in_text:
+            ok = login.logged_in_text in resp.text
+        else:
+            ok = not _has_password_input(resp.text)
+        if not ok:
+            raise _Stop("FAILED", "Login failed: after signing in the app still showed the login form (or the "
+                                  "'logged-in text' was not found). Check the user name and password.")
+        st.logged_in = True
+        landing = urlsplit(resp.url)
+        st.landing = _Page(_clean_path(landing.path), list(dict.fromkeys(k for k, _ in parse_qsl(landing.query, True))))
+
+    def scan(self, target: str, report: Path, time_limit: int, seeds: list[tuple[str, list[str]]] | None = None,
+             login: Any = None) -> ScanExecution:
         cov = Coverage(SCANNER, SCAN_TYPE, target, frozenset({CATEGORY}), frozenset(SEVERITIES))
         ex = ScanExecution(SCANNER, SCAN_TYPE, target, "PENDING", cov, tool_version=ENGINE_VERSION,
                            command=["built-in DAST", target])
@@ -534,6 +640,8 @@ class DastScanner:
         seeds_done = 0
         try:
             try:
+                if login is not None:
+                    self._login(st, client, login)
                 start = self._fetch_start(st, client)
             except Unreachable as exc:
                 ex.status = "SKIPPED"
@@ -552,6 +660,8 @@ class DastScanner:
 
             first = _Page(start_path, list(dict.fromkeys(k for k, _ in parse_qsl(urlsplit(start.url).query, True))))
             queue: deque[tuple[_Page, bool]] = deque([(first, False)])
+            if st.landing is not None:
+                queue.append((st.landing, False))
             queue.extend((_Page(_clean_path(p), list(ps)), True) for p, ps in seeds)
             seen: set[tuple[str, tuple[str, ...]]] = set()
             visited = 0
@@ -580,6 +690,9 @@ class DastScanner:
                             queue.append((nxt, False))
                 seeds_done += is_seed
         except _Stop as stop:
+            if stop.status == "FAILED":
+                ex.status, ex.error_message = "FAILED", str(stop)
+                return ex
             if stop.status != "BUDGET":
                 ex.status, ex.error_message = stop.status, str(stop)
                 return ex
@@ -607,6 +720,7 @@ class DastScanner:
             "scanner": "Local Security Scanner built-in DAST", "engine_version": ENGINE_VERSION, "target": target,
             "started_at": ex.started_at, "duration_seconds": ex.duration,
             "pages_tested": sorted(set(st.pages)), "requests_sent": client.count, "requests_failed": client.errors,
+            "logged_in": st.logged_in,
             "checks": sorted(CHECKS),
             "findings": [{"check": f.rule_id, "severity": f.severity, "path": f.file_path,
                           "parameter": f.metadata.get("parameter"), "title": f.title,
@@ -625,4 +739,5 @@ def read_report_summary(path: str | None) -> dict[str, Any] | None:
         data = json.loads(Path(path).read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
-    return {"pages": len(data.get("pages_tested") or []), "requests": data.get("requests_sent", 0)}
+    return {"pages": len(data.get("pages_tested") or []), "requests": data.get("requests_sent", 0),
+            "logged_in": bool(data.get("logged_in"))}

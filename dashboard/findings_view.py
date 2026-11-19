@@ -15,6 +15,7 @@ from dashboard.common import (ROW_SELECT, fmt_ts, get_config, get_conn, html, no
                               section, selected_row)
 from dashboard.states import no_repositories
 from services import analytics_service as an
+from services.explain import explain
 from services.export_service import findings_csv_bytes
 from utils.validators import CATEGORIES, SEVERITIES
 
@@ -28,11 +29,12 @@ KINDS: dict[str, dict[str, Any]] = {
     "misconf": {"title": "Misconfigurations", "category": "MISCONFIGURATION",
                 "subtitle": "Infrastructure-as-code and container configuration issues detected by Trivy"},
     "code": {"title": "Code issues", "category": "CODE",
-             "subtitle": "Security bugs in your own Python code (SAST) · found by Bandit without running the code"},
+             "subtitle": "Security bugs in your own code (SAST) · Python by Bandit; JavaScript/TypeScript, HTML "
+                         "templates, PHP, Java, Go and C# by the built-in check · the code is never run"},
     "web": {"title": "Web app issues", "category": "WEB",
             "subtitle": "Problems found by testing your running apps through their web address (DAST) · local apps only"},
 }
-SCANNER_FOR = {"vuln": "trivy", "misconf": "trivy", "code": "bandit", "web": "dast"}
+SCANNER_FOR = {"vuln": ("trivy",), "misconf": ("trivy",), "code": ("bandit", "codescan"), "web": ("dast",)}
 NO_TARGETS = ("No web addresses added yet. DAST tests an app while it runs, so it needs the address where the app "
               "answers (for example http://127.0.0.1:5000/). Add it under Settings → Web scan (DAST), start the "
               "app, then scan the project.")
@@ -61,6 +63,7 @@ def _web_checked(cfg, conn, empty: bool) -> None:  # noqa: ANN001
         else:
             result = r["status"].replace("_", " ").title()
         rows.append({"Project": tgt.repository, "Address": tgt.url,
+                     "Signed in": ("yes" if summ and summ.get("logged_in") else "no") if tgt.login else "no login set",
                      "Last tested": fmt_ts(r["finished_at"]) if r else "—", "Result": result,
                      "Pages tested": str(summ["pages"]) if summ else "—",
                      "Requests": str(summ["requests"]) if summ else "—"})
@@ -69,7 +72,8 @@ def _web_checked(cfg, conn, empty: bool) -> None:  # noqa: ANN001
         if ran:
             notice("ok", "No web app issues found",
                    f"{len(ran)} address(es) were tested ({sum(int(x['Pages tested']) for x in ran)} page(s)) and no "
-                   "known problem was found. Only what the scan could reach without logging in was tested.")
+                   "known problem was found. Pages behind a login were only tested for addresses with a "
+                   "test-account login set in Settings.")
         else:
             notice("neutral", "Web apps not tested yet",
                    "No address has been tested successfully. Start the app, then scan its project from the "
@@ -77,8 +81,24 @@ def _web_checked(cfg, conn, empty: bool) -> None:  # noqa: ANN001
     st.markdown("**What was tested**")
     st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
     st.caption("Only GET requests are sent (forms that change data are never submitted), links such as log out or "
-               "delete are not followed, and only apps on this computer can be tested. Pages behind a login are not "
-               "tested.")
+               "delete are not followed, and only apps on this computer can be tested. Pages behind a login are "
+               "tested only for addresses with a test-account login set in Settings (one sign-in POST, password "
+               "read from an environment variable).")
+
+
+def explanation_html(f: dict[str, Any], meta: dict[str, Any], color: str) -> str:
+    """The plain-language card: what was found, why it matters, how it is abused, fix steps, how soon."""
+    e = explain({**f, "metadata": meta})
+    steps = "".join(f"<li>{t.esc(s)}</li>" for s in e.fix)
+    terms = (f"<div class='lss-note'>New to these words? See Help → Glossary: {t.esc(', '.join(e.terms))}.</div>"
+             if e.terms else "")
+    note = f"<div class='lss-note'>{t.esc(e.note)}</div>" if e.note else ""
+    return (f"<div class='lss-explain' style='--c:{color}'>"
+            f"<h4>What was found</h4><p>{t.esc(e.what)}</p>"
+            f"<h4>Why it matters</h4><p>{t.esc(e.why)}</p>"
+            f"<h4>How an attacker could use it</h4><p>{t.esc(e.attack)}</p>"
+            f"<h4>How to fix it</h4><ol>{steps}</ol>"
+            f"<h4>How soon</h4><span class='lss-urgent'>{t.esc(e.urgency)}</span>{note}{terms}</div>")
 
 
 def _meta(conn, finding_id: int) -> dict[str, Any]:  # noqa: ANN001
@@ -140,22 +160,30 @@ def _what_was_checked(cfg, conn, kind: str, empty: bool) -> None:  # noqa: ANN00
         _web_checked(cfg, conn, empty)
     elif kind == "code":
         total = sum(c.python_files for c in covs)
+        other = sum(sum(c.other_files.values()) for c in covs) if cfg.sast.other_languages else 0
         if empty:
-            if not total:
+            if not total and not other:
                 notice("neutral", "Nothing to check",
-                       "None of your projects contains Python (.py) files, which is what the code check reads. "
-                       "The page is empty because there is nothing to check, not because the code is safe.")
+                       "None of your projects contains code files the code check reads (Python, JavaScript/"
+                       "TypeScript, HTML templates, PHP, Java, Go, C#). The page is empty because there is nothing "
+                       "to check, not because the code is safe.")
             else:
                 notice("ok", "No code issues found",
-                       f"Bandit checked about {total} Python file(s) in your own code and found no known risky "
-                       "patterns (installed libraries such as .venv are skipped).")
-        rows = [{"Project": c.repository, "Python files checked": c.python_files,
-                 "Note": "" if c.python_files else "No Python files: nothing for the code check to read."}
+                       f"About {total} Python file(s) and {other} file(s) in other languages were checked and no "
+                       "known risky pattern was found (installed libraries such as .venv and node_modules are "
+                       "skipped).")
+        rows = [{"Project": c.repository, "Python files": c.python_files,
+                 "Other languages": ", ".join(f"{n} {lang}" for lang, n in sorted(c.other_files.items()))
+                 if cfg.sast.other_languages and c.other_files else "—",
+                 "Note": "" if c.python_files or c.other_files else "No code files: nothing for the code check to read."}
                 for c in covs]
         if rows:
             st.markdown("**What was checked**")
             st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
-        st.caption("Only Python is checked today. Code in other languages (JavaScript, Java, …) is not analysed.")
+        st.caption("Python is checked in depth by Bandit. JavaScript/TypeScript, HTML templates, PHP, Java, Go and C# "
+                   "are checked by the built-in code scan for the most common risky patterns. Other languages are "
+                   "not analysed." if cfg.sast.other_languages else
+                   "Only Python is checked (the check for other languages is turned off in Settings).")
     else:
         files = [(c.repository, kind_, path) for c in covs for kind_, path in c.config_files]
         if empty:
@@ -191,7 +219,7 @@ def render_findings(kind: str) -> None:
         ok_runs, ok_repos = conn.execute(
             "SELECT COUNT(*), COUNT(DISTINCT s.repository_id) FROM scan_runs s JOIN repositories r "
             "ON r.id=s.repository_id AND r.active=1 WHERE s.status IN ('COMPLETED','COMPLETED_WITH_FINDINGS')"
-            + (" AND s.scanner=?" if scanner else ""), (scanner,) if scanner else ()).fetchone()
+            + (f" AND s.scanner IN ({','.join('?' * len(scanner))})" if scanner else ""), scanner or ()).fetchone()
         if kind == "web" and not cfg.dast.targets:
             _web_checked(cfg, conn, empty=True)
         elif ok_runs and scanner:
@@ -205,7 +233,7 @@ def render_findings(kind: str) -> None:
             _web_checked(cfg, conn, empty=True)
         elif kind == "code":
             notice("neutral", "Code not scanned yet",
-                   "The code check (Bandit) has not completed on any project yet, so there is nothing to show. "
+                   "The code check has not completed on any project yet, so there is nothing to show. "
                    "This does not mean the code is safe. Run a scan from the Repositories page.")
         else:
             notice("neutral", "No scan data yet",
@@ -388,6 +416,7 @@ def _detail(conn, f: pd.Series, kind: str) -> None:  # noqa: ANN001
             cwe = meta.get("cwe")
             name = str(meta.get("test_name") or "").replace("_", " ")
             right = [("Check", t.esc(f"{f['rule_id'] or '—'} · {name}")),
+                     ("Language", t.esc(meta.get("language") or "Python")),
                      ("Confidence", t.esc(str(meta.get("confidence") or "—").title())),
                      ("Weakness type", t.esc(f"CWE-{cwe}" if cwe else "—"))] + right
         elif f["category"] == "WEB":
@@ -397,17 +426,21 @@ def _detail(conn, f: pd.Series, kind: str) -> None:  # noqa: ANN001
                      ("Parameter", t.esc(meta.get("parameter") or "—")),
                      ("Evidence", t.esc(meta.get("evidence") or "—")),
                      ("Weakness type", t.esc(f"CWE-{cwe}" if cwe else "—"))] + right
+        section("In plain words", "what it is, why it matters and how to fix it")
+        html(explanation_html(dict(f), meta, color))
         c1.markdown(t.kv_table(left), unsafe_allow_html=True)
         c2.markdown(t.kv_table(right), unsafe_allow_html=True)
-        if f["description"]:
-            section("Description")
-            html(f"<div class='lss-desc'>{t.esc(f['description'])}</div>")  # plain text: no remote images or links
-        section("Remediation")
-        html(f"<div class='lss-remed' style='--c:{color}'>{t.esc(f['remediation'] or 'Review and remediate.')}</div>")
-        url = t.safe_url(f["reference_url"])
-        if url:
-            html(f"<p style='margin-top:.6rem'><a href='{t.esc(url)}' target='_blank' rel='noopener noreferrer'>"
-                 f"Reference ↗</a> <span style='color:#64748B;font-size:.78rem'>{t.esc(url)}</span></p>")
+        with st.expander("Technical details from the scanner", icon=":material/terminal:"):
+            if f["description"]:
+                st.markdown("**Description**")
+                html(f"<div class='lss-desc'>{t.esc(f['description'])}</div>")  # plain text: no remote images/links
+            st.markdown("**Scanner's remediation**")
+            html(f"<div class='lss-remed' style='--c:{color}'>{t.esc(f['remediation'] or 'Review and remediate.')}"
+                 "</div>")
+            url = t.safe_url(f["reference_url"])
+            if url:
+                html(f"<p style='margin-top:.6rem'><a href='{t.esc(url)}' target='_blank' rel='noopener noreferrer'>"
+                     f"Reference ↗</a> <span style='color:#64748B;font-size:.78rem'>{t.esc(url)}</span></p>")
         if f["category"] == "SECRET":
             notice("warn", "Treat as compromised if real",
                    "Revoke and rotate it at the provider first, then remove it from the code (and history if needed). "

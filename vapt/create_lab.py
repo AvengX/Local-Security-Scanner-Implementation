@@ -39,7 +39,53 @@ def fake_secrets() -> dict[str, str]:
         "github_pat_venv": "ghp_" + _rand(string.ascii_letters + string.digits, 36),
         "sast_db_password": "pw-" + _rand(string.ascii_letters + string.digits, 20),
         "dast_env_password": "envpw-" + _rand(string.ascii_letters + string.digits, 20),  # served by the lab web app
+        "dast_login_password": "login-" + _rand(string.ascii_letters + string.digits, 20),  # lab test account
     }
+
+
+# Risky front-end / Node code for the built-in code scan (other languages). Never executed: it only has to be read.
+VULN_JS = """// Lab fixture: intentionally unsafe browser code
+function showResult(data) {
+  document.getElementById('out').innerHTML = data.message;
+}
+function runFormula(text) {
+  return eval(text);
+}
+localStorage.setItem('authToken', window.sessionToken);
+"""
+VULN_TEMPLATE = """<!doctype html>
+<html><head>
+<script src="https://cdn.example.com/widget.js"></script>
+</head><body>
+<h1>Profile</h1>
+<div class="bio">{{ user.bio|safe }}</div>
+</body></html>
+"""
+VULN_NODE_SERVER = """// Lab fixture: intentionally unsafe Node.js server code
+const { exec } = require('child_process');
+function findUser(db, name) {
+  return db.query(`SELECT * FROM users WHERE name = '${name}'`);
+}
+function ping(host) {
+  exec(`ping -c 1 ${host}`);
+}
+module.exports = { findUser, ping };
+"""
+CLEAN_JS = """// Safe equivalents: text is inserted as text, data parsed as JSON, queries parameterised
+function showResult(data) {
+  document.getElementById('out').textContent = data.message;
+}
+function parse(text) {
+  return JSON.parse(text);
+}
+function findUser(db, name) {
+  return db.query('SELECT * FROM users WHERE name = ?', [name]);
+}
+"""
+CLEAN_TEMPLATE = """<!doctype html>
+<html><head><script src="/static/clean.js"></script></head>
+<body><h1>{{ title }}</h1><a href="https://example.com" target="_blank" rel="noopener noreferrer">Docs</a></body></html>
+"""
 
 
 # Insecure code for the SAST (Bandit) check. Never imported or executed: it only has to be read.
@@ -183,7 +229,8 @@ def create_lab(lab_dir: Path) -> dict[str, object]:
     _write(py, {"app/aws.py": (f'AWS_ACCESS_KEY_ID = "{s["aws_access_key_id"]}"\n'
                                f'AWS_SECRET_ACCESS_KEY = "{s["aws_secret_access_key"]}"\n'),
                 "app/github.py": f'TOKEN = "{s["github_pat_current"]}"\n',
-                "app/db.py": insecure_code(s["sast_db_password"])})
+                "app/db.py": insecure_code(s["sast_db_password"]),
+                "app/static/app.js": VULN_JS, "app/templates/profile.html": VULN_TEMPLATE})
     _git(py, "add", "-A")
     _git(py, "commit", "-qm", "add cloud client")
     # Untracked installed-dependency folder (as a real virtualenv would be): must be skipped by scans.
@@ -196,6 +243,7 @@ def create_lab(lab_dir: Path) -> dict[str, object]:
         "package.json": json.dumps({"name": "vuln-node-app", "version": "1.0.0",
                                     "dependencies": {"lodash": "4.17.15", "minimist": "1.2.0"}}, indent=2),
         "package-lock.json": json.dumps(NODE_LOCK, indent=2),
+        "server.js": VULN_NODE_SERVER,
     })
 
     # 3. Infrastructure-as-code misconfigurations.
@@ -207,6 +255,7 @@ def create_lab(lab_dir: Path) -> dict[str, object]:
     _new_repo(targets, "clean-app", {
         "main.py": "def add(a: int, b: int) -> int:\n    return a + b\n",
         "README.md": "# Clean control repository\n",
+        "static/clean.js": CLEAN_JS, "templates/index.html": CLEAN_TEMPLATE,
     })
 
     meta = {"targets": str(targets), "secrets": s}

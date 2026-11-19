@@ -13,6 +13,7 @@ from database import repositories as dao
 from services import analytics_service as an
 from services import audit_report as audit
 from services import export_service as ex
+from services import summary_report as summary
 from services.report_service import list_reports, read_report_for_run
 from utils.security import safe_report_path
 
@@ -39,6 +40,7 @@ def render() -> None:
                     f"{t.chip(f'{len(fdf)} findings incl. resolved', 'neutral', 'database')}</div>",
                     unsafe_allow_html=True)
 
+    _management_summary(conn, cfg, repo)
     section("Exports", "generated now from the database · secret values are never included")
     if not repos:
         notice("neutral", "No repositories yet", "Exports will contain data after repositories are discovered and "
@@ -66,6 +68,40 @@ def render() -> None:
     _audit_report(conn, cfg, repo)
     _saved_exports(cfg)
     _raw_reports(conn, cfg, repo_id)
+
+
+def _management_summary(conn, cfg, repo) -> None:  # noqa: ANN001
+    section("Management summary", "plain-language VAPT report for managers and clients · print to PDF")
+    st.caption("Overall risk level, a table per project, the ten things to fix first written as actions, what was "
+               "and was not tested, and progress over the last 30 days. No jargon, no secret values.")
+    c1, c2 = st.columns([1, 3], vertical_alignment="center")
+    if c1.button("Generate summary", icon=":material/summarize:", type="primary", width="stretch",
+                 key="summary_generate"):
+        try:
+            with st.spinner("Building the summary…"):
+                name, doc, data = summary.generate_summary(conn, cfg, repo["id"] if repo else None)
+                path = ex.write_export(cfg.reports_dir, name, doc)
+        except Exception as exc:  # noqa: BLE001 — show the reason instead of a stack trace
+            notice("err", "Could not build the summary", str(exc))
+            return
+        st.session_state["summary_last"] = {"scope": repo["id"] if repo else None, "path": str(path),
+                                            "risk": data["risk"][0], "actions": len(data["priorities"])}
+    last = st.session_state.get("summary_last")
+    if not last or last["scope"] != (repo["id"] if repo else None):
+        c2.caption("Uses the scope chosen above. Generates an HTML file in reports/exports; open it and choose "
+                   "Print → Save as PDF.")
+        return
+    try:
+        path = safe_report_path(last["path"], cfg.reports_dir)
+    except (PermissionError, FileNotFoundError) as exc:
+        notice("err", "Summary file not available", str(exc))
+        return
+    c2.markdown(f"<div class='lss-chips' style='justify-content:flex-start'>{t.chip(last['risk'], 'info', 'shield_check')}"
+                f"{t.chip(f'{last['actions']} action(s) to take', 'neutral', 'bug')}</div>", unsafe_allow_html=True)
+    d1, d2 = st.columns([1, 3], vertical_alignment="center")
+    d1.download_button("Download summary (HTML)", path.read_bytes(), path.name, "text/html",
+                       icon=":material/download:", width="stretch", key="summary_download")
+    d2.caption(f"Saved to {path}")
 
 
 def _audit_report(conn, cfg, repo) -> None:  # noqa: ANN001
@@ -139,7 +175,7 @@ def _saved_exports(cfg) -> None:  # noqa: ANN001
 
 def _raw_reports(conn, cfg, repo_id) -> None:  # noqa: ANN001
     section("Raw scanner reports", "only reports registered in the database and inside the reports folder")
-    tool = st.segmented_control("Scanner", ["trivy", "gitleaks", "bandit", "dast"], default="trivy", key="raw_tool",
+    tool = st.segmented_control("Scanner", ["trivy", "gitleaks", "bandit", "codescan", "dast"], default="trivy", key="raw_tool",
                                 format_func=str.title) or "trivy"
     entries = list_reports(conn, cfg.reports_dir, scanner=tool, repository_id=repo_id)
     if not entries:

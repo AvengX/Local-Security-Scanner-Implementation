@@ -22,7 +22,7 @@ from utils.validators import SEVERITIES
 
 APP = str(Path(__file__).resolve().parent.parent / "app.py")
 PAGES = ["overview", "repositories", "findings", "vulnerabilities", "secrets", "code_issues", "web_issues", "misconfigurations", "history",
-         "reports", "vapt", "settings"]
+         "reports", "vapt", "settings", "help"]
 
 
 @pytest.fixture

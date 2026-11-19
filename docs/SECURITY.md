@@ -47,6 +47,10 @@ weaken Git's ownership checks itself.
 * The web scan (DAST) contacts loopback addresses only (validated in config and before every request, no proxy,
   no off-site redirects), sends GET requests only (plus one TRACE probe), never submits POST forms, skips links
   such as logout/delete, and never stores response bodies — an exposed `.env` is recorded by path and size only.
+* Web-scan login (optional): only the NAME of an environment variable is stored; the password is read at scan time,
+  sent once to the app's own login form (same origin, loopback) and never written to config, database, reports or
+  logs. Configuration errors never echo input values, so a password typed into the wrong field is not displayed.
+* The built-in code scan for other languages reads files as text and never stores matched source lines.
 * Bandit reports are rewritten after parsing without code snippets, and hardcoded-password messages are
   replaced by a fixed text; a failed, timed-out or cancelled Bandit run leaves no report behind.
 * Trivy masks secret matches with asterisks in its JSON, but surrounding code lines are included. Treat
@@ -55,9 +59,11 @@ weaken Git's ownership checks itself.
 
 ## Known limitations
 * Detection quality is bounded by Trivy/Gitleaks/Bandit rules and the freshness of Trivy's DB.
-* SAST covers Python only and finds known risky patterns; it cannot find logic flaws (for example missing
+* SAST covers Python in depth (Bandit) and common risky patterns in JavaScript/TypeScript, HTML templates, PHP,
+  Java, Go and C# (built-in rules); it cannot find logic flaws (for example missing
   authorisation checks). Lines marked `# nosec` are not reported. There is no penetration testing of
-  running applications beyond the built-in web scan, which does not log in, sends GET requests only and is not
+  running applications beyond the built-in web scan, which signs in only with a configured test account, sends GET
+  requests only (plus that one sign-in) and is not
   a substitute for a manual penetration test.
 * Windows Smart App Control / WDAC can block unsigned scanner binaries or Python extension DLLs; the app
   detects and reports this but does not bypass it.

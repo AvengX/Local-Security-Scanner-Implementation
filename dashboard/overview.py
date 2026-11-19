@@ -210,6 +210,8 @@ def _health_html(cfg, conn) -> str:  # noqa: ANN001
     for key, label in (("trivy", "Trivy"), ("gitleaks", "Gitleaks"), ("bandit", "Bandit (code)"), ("git", "Git")):
         h = health[key]
         rows.append((label, h["state"], h["label"], h["version"] and f"v{h['version']}"))
+    if cfg.sast.enabled and cfg.sast.other_languages:
+        rows.append(("Code scan, other languages", "ok", "Built in", "JavaScript/TypeScript, templates, PHP, Java, Go, C#"))
     if cfg.dast.enabled:
         n = len(cfg.dast.targets)
         rows.append(("Web scan (DAST)", "ok" if n else "warn", "Built in" if n else "No addresses added",

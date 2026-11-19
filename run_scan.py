@@ -200,6 +200,30 @@ def cmd_audit(cfg: AppConfig, args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def cmd_summary(cfg: AppConfig, args: argparse.Namespace) -> int:
+    from database import repositories as dao
+    from database.db import init_db
+    from services.export_service import write_export
+    from services.summary_report import generate_summary
+
+    conn = init_db(cfg.db_path)
+    repo_id = None
+    if args.name or args.path:
+        matches = dao.find_repositories(conn, name=args.name, path=args.path)
+        if len(matches) != 1:
+            print(f"Repository not found or ambiguous ({len(matches)} matches).")
+            conn.close()
+            return EXIT_USAGE
+        repo_id = matches[0]["id"]
+    name, doc, data = generate_summary(conn, cfg, repo_id)
+    conn.close()
+    path = write_export(cfg.reports_dir, name, doc)
+    print(f"{data['risk'][0]}: {data['risk'][2]}")
+    print(f"Wrote {path}")
+    print("Open it in a browser and choose Print -> Save as PDF for a PDF copy.")
+    return EXIT_OK
+
+
 def cmd_update_databases(cfg: AppConfig, args: argparse.Namespace) -> int:
     from engine.scanner_health import check_trivy, trivy_db_freshness
     from engine.trivy_scanner import TrivyScanner
@@ -216,11 +240,11 @@ def cmd_update_databases(cfg: AppConfig, args: argparse.Namespace) -> int:
 
 
 def cmd_health(cfg: AppConfig, args: argparse.Namespace) -> int:
-    from engine.scanner_health import (check_bandit, check_dast, check_git, check_gitleaks, check_trivy,
-                                       trivy_db_freshness)
+    from engine.scanner_health import (check_bandit, check_codescan, check_dast, check_git, check_gitleaks,
+                                       check_trivy, trivy_db_freshness)
 
     tools = [check_git(), check_trivy(cfg.trivy.executable), check_gitleaks(cfg.gitleaks.executable), check_bandit(),
-             check_dast()]
+             check_codescan(), check_dast()]
     print(f"Python {sys.version.split()[0]}   config: {config_path()}")
     ok = True
     for t in tools:
@@ -340,6 +364,9 @@ def build_parser() -> argparse.ArgumentParser:
     ag.add_argument("--name", help="Repository name (as discovered)")
     ag.add_argument("--path", help="Absolute repository path")
 
+    sm = sub.add_parser("summary", help="Write the plain-language management summary (HTML) for all or one project")
+    sm.add_argument("--name")
+    sm.add_argument("--path")
     u = sub.add_parser("update-databases", help="Download/refresh Trivy vulnerability databases (online)")
     u.add_argument("--force", action="store_true", help="Update even if offline mode is enabled")
     sub.add_parser("health", help="Check tools, versions and DB freshness")
@@ -361,7 +388,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 COMMANDS = {
     "init": cmd_init, "discover": cmd_discover, "scan-all": cmd_scan_all, "scan-repo": cmd_scan_repo,
-    "status": cmd_status, "report": cmd_report, "audit": cmd_audit, "update-databases": cmd_update_databases,
+    "status": cmd_status, "report": cmd_report, "audit": cmd_audit, "summary": cmd_summary, "update-databases": cmd_update_databases,
     "health": cmd_health, "schedule": cmd_schedule, "unschedule": cmd_unschedule, "prune": cmd_prune,
 }
 

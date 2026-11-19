@@ -47,12 +47,20 @@ gitleaks:
 sast:                         # code scan (static analysis) of your own Python code with Bandit
   enabled: true
   skip_tests: []              # Bandit check IDs to skip, e.g. [B101] for assert statements
+  other_languages: true       # also check JavaScript/TypeScript, HTML templates, PHP, Java, Go and C# (built in)
 
 dast:                         # web scan (dynamic testing) of your own RUNNING apps; built in, nothing to install
   enabled: true
   targets: []                 # only localhost / 127.0.0.1 / ::1 addresses are accepted, for example:
   #  - repository: my-flask-app         # project that serves the app (name as shown on the Repositories page)
   #    url: http://127.0.0.1:5000/      # the app must be running when the scan starts, otherwise it is skipped
+  #    login:                           # optional: also test pages behind sign-in, with a TEST account
+  #      url: http://127.0.0.1:5000/login
+  #      username: test-user
+  #      password_env: LSS_MYAPP_PASSWORD   # NAME of an environment variable holding the password (never the password)
+  #      username_field: ''             # optional: form field names, detected automatically when empty
+  #      password_field: ''
+  #      logged_in_text: ''             # optional: text that only appears when signed in
   max_pages: 30               # pages followed per address
   max_requests: 400           # requests sent per address (GET only; forms that change data are never submitted)
   request_timeout: 10         # seconds to wait for one response

@@ -5,11 +5,11 @@ CLI (`run_scan.py`) exactly as a user would, and verifies the results with PASS/
 
   Phase 1  tool health                      Phase 5  remediation -> finding RESOLVED
   Phase 2  discovery                        Phase 6  offline scan with cached DB
-  Phase 3  full scan (all scanners + DAST)  Phase 7  report export
-  Phase 4  detection checks                 Phase 8  secret-leak audit of DB, reports and logs
+  Phase 3  full scan (all scanners + DAST)  Phase 7  report export (incl. management summary)
+  Phase 4  detection checks + explanations  Phase 8  secret-leak audit of DB, reports and logs
 
 The DAST checks run against two small web apps (vapt/lab_web_app.py) started on 127.0.0.1 by this test: one
-deliberately unsafe, one done right.
+deliberately unsafe (with a members area behind a sign-in form, scanned with a test account), one done right.
 
 Results: vapt_lab/VAPT_TEST_RESULTS.md and .json. Exit code 0 only if every check passes.
 Scope note: static scanning plus a safe, GET-only web scan of local lab apps. It is not a manual penetration
@@ -35,7 +35,9 @@ PROJECT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT))
 
 from vapt.create_lab import _rmtree, create_lab, fix_sql_injection, upgrade_python_dependency  # noqa: E402
-from vapt.lab_web_app import LabWebApp  # noqa: E402
+from vapt.lab_web_app import LOGIN_USER, LabWebApp  # noqa: E402
+
+LOGIN_ENV = "LSS_VAPT_LOGIN_PASSWORD"
 
 REPOS = {"vuln-python-app", "vuln-node-app", "insecure-infra", "clean-app"}
 SUCCESS = ("COMPLETED", "COMPLETED_WITH_FINDINGS")
@@ -108,7 +110,9 @@ class Vapt:
         print("\n== Setup: building VAPT lab")
         _rmtree(self.app)
         meta = create_lab(self.lab)
-        self.web_vuln = LabWebApp("vulnerable", meta["secrets"]["dast_env_password"]).start()
+        self.web_vuln = LabWebApp("vulnerable", meta["secrets"]["dast_env_password"],
+                                  meta["secrets"]["dast_login_password"]).start()
+        os.environ[LOGIN_ENV] = meta["secrets"]["dast_login_password"]  # inherited by the CLI; never in config
         self.web_clean = LabWebApp("clean").start()
         cfg = {
             "repository_roots": [meta["targets"]],
@@ -118,7 +122,9 @@ class Vapt:
             "trivy": {"scan_types": ["fs", "config"], "scanners": ["vuln", "misconfig", "secret"],
                       "generate_sbom": True},
             "gitleaks": {"modes": ["git", "dir"]},
-            "dast": {"targets": [{"repository": "vuln-python-app", "url": self.web_vuln.url},
+            "dast": {"targets": [{"repository": "vuln-python-app", "url": self.web_vuln.url,
+                                  "login": {"url": self.web_vuln.url + "login", "username": LOGIN_USER,
+                                            "password_env": LOGIN_ENV}},
                                  {"repository": "clean-app", "url": self.web_clean.url}]},
         }
         self.cfg_path.write_text(yaml.safe_dump(cfg, sort_keys=False), encoding="utf-8")
@@ -135,6 +141,7 @@ class Vapt:
         self.r.add("1 Health", "Gitleaks installed and runnable", "gitleaks  OK" in out)
         self.r.add("1 Health", "Bandit (SAST) installed and runnable", "bandit    OK" in out)
         self.r.add("1 Health", "Web scan (DAST) built in and ready", "dast      OK" in out)
+        self.r.add("1 Health", "Code scan for other languages built in and ready", "codescan  OK" in out)
         db_line = next((ln.strip() for ln in out.splitlines() if "Vulnerability DB" in ln), "")
         self.r.add("1 Health", "Trivy vulnerability DB cached and fresh",
                    "No cached" not in db_line and "STALE" not in db_line, db_line)
@@ -148,7 +155,7 @@ class Vapt:
         self.r.add("2 Discovery", "All 4 lab repositories discovered", names == REPOS, ", ".join(sorted(names)))
 
     def phase_scan(self) -> int:
-        print("\n== Phase 3: full scan (Trivy fs + config + SBOM, Gitleaks git + dir, Bandit, DAST)")
+        print("\n== Phase 3: full scan (Trivy fs + config + SBOM, Gitleaks git + dir, Bandit, code scan, DAST)")
         code, out = self.cli("scan-all")
         last = self.max_run_id()
         bad = self.q("SELECT r.name, s.scanner, s.scan_type, s.status, s.error_message FROM scan_runs s "
@@ -158,7 +165,7 @@ class Vapt:
                    "; ".join(f"{b['name']} {b['scanner']}:{b['scan_type']}={b['status']} {b['error_message'] or ''}"
                              for b in bad)[:400])
         total = self.q("SELECT COUNT(*) c FROM scan_runs")[0]["c"]
-        self.r.add("3 Scan", "26 scanner runs recorded (4 repos x 6 jobs + 2 web addresses)", total == 26,
+        self.r.add("3 Scan", "30 scanner runs recorded (4 repos x 7 jobs + 2 web addresses)", total == 30,
                    f"{total} runs")
         meta_ok = self.q("SELECT COUNT(*) c FROM scan_runs WHERE tool_version IS NULL OR "
                          "(scanner='trivy' AND database_updated_at IS NULL)")[0]["c"] == 0
@@ -227,8 +234,21 @@ class Vapt:
         self.r.add("4 Detection", "SAST: code issues carry file, line and remediation",
                    bool(code) and all((r["file_path"] or "").startswith("app/") and r["line"] and r["remediation"]
                                      for r in code), f"{len(code)} code issues in {len({r['file_path'] for r in code})} files")
-        self.r.add("4 Detection", "SAST: repositories without Python report no code issues",
-                   not f("insecure-infra", "category='CODE'") and not f("vuln-node-app", "category='CODE'"))
+        self.r.add("4 Detection", "SAST: Bandit reports nothing for repositories without Python",
+                   not f("insecure-infra", "category='CODE'")
+                   and not f("vuln-node-app", "category='CODE' AND scanner='bandit'"))
+        other = f("vuln-python-app", "scanner='codescan'") + f("vuln-node-app", "scanner='codescan'")
+        for rule, path, what in (("JS-EVAL", "app/static/app.js", "JavaScript eval()"),
+                                 ("JS-INNERHTML", "app/static/app.js", "JavaScript innerHTML from a variable"),
+                                 ("JS-STORAGE-TOKEN", "app/static/app.js", "token saved in localStorage"),
+                                 ("TPL-SAFE-FILTER", "app/templates/profile.html", "template |safe (escaping off)"),
+                                 ("TPL-NO-SRI", "app/templates/profile.html", "CDN script without integrity"),
+                                 ("JS-SQL-CONCAT", "server.js", "Node SQL built from a template string"),
+                                 ("JS-CMD-INJECTION", "server.js", "Node exec() with a variable")):
+            hit = [r for r in other if r["rule_id"] == rule and r["file_path"] == path]
+            self.r.add("4 Detection", f"Code scan (other languages): {what} detected ({rule})", bool(hit),
+                       f"{path}:{hit[0]['line']} {hit[0]['severity']}" if hit else
+                       ", ".join(sorted({r['rule_id'] for r in other})))
 
         web = f("vuln-python-app", "category='WEB'")
         checks = {r["rule_id"]: r for r in web}
@@ -248,6 +268,24 @@ class Vapt:
         self.r.add("4 Detection", "DAST: never followed log-out/delete links or sent POST requests",
                    self.web_vuln.state.destructive_hits == 0 and self.web_vuln.state.post_hits == 0,
                    f"{self.web_vuln.state.destructive_hits} destructive GETs, {self.web_vuln.state.post_hits} POSTs")
+        member = [r for r in web if r["rule_id"] == "DAST-XSS" and r["file_path"] == "/account/notes"]
+        self.r.add("4 Detection", "DAST login: XSS behind the sign-in form found with the test account", bool(member),
+                   member[0]["severity"] if member else ", ".join(sorted({r['file_path'] for r in web})))
+        self.r.add("4 Detection", "DAST login: exactly one sign-in POST per web scan, no other POST",
+                   self.web_vuln.state.login_posts == 1 and self.web_vuln.state.post_hits == 0,
+                   f"{self.web_vuln.state.login_posts} sign-in POST(s)")
+        from engine.dast_scanner import DastScanner
+        from utils.config import DastLogin
+
+        os.environ["LSS_VAPT_WRONG_PW"] = "not-the-password"
+        try:
+            bad = DastScanner().scan(self.web_vuln.url, self.lab / "wrong_login.json", 120, login=DastLogin(
+                url=self.web_vuln.url + "login", username=LOGIN_USER, password_env="LSS_VAPT_WRONG_PW"))
+        finally:
+            os.environ.pop("LSS_VAPT_WRONG_PW", None)
+        self.r.add("4 Detection", "DAST login: a wrong test password makes the web scan FAIL (nothing resolved)",
+                   bad.status == "FAILED" and "Login failed" in (bad.error_message or ""),
+                   f"{bad.status}: {bad.error_message}")
         refused = subprocess.run([self.python, "-c", "from utils.config import AppConfig; AppConfig.model_validate("
                                   "{'dast': {'targets': [{'repository': 'x', 'url': 'http://example.com/'}]}})"],
                                  capture_output=True, text=True, cwd=PROJECT)
@@ -267,6 +305,21 @@ class Vapt:
         self.r.add("4 Detection", "CycloneDX SBOM generated for each repository", ok, f"{len(sboms)} SBOMs")
         dup = self.q("SELECT COUNT(*) - COUNT(DISTINCT repository_id || fingerprint) d FROM findings")[0]["d"]
         self.r.add("4 Detection", "No duplicate findings stored", dup == 0)
+
+        from services.explain import explain
+
+        rows = [dict(r) for r in self.q("SELECT * FROM findings")]
+        expl = [(r, explain(r)) for r in rows]
+        complete = [r for r, e in expl if e.what and e.why and e.attack and len(e.fix) >= 2 and e.urgency]
+        self.r.add("4 Explain", "Every finding has a plain-language explanation (what, why, attack, fix steps, when)",
+                   bool(rows) and len(complete) == len(rows), f"{len(complete)}/{len(rows)} findings")
+        generic = sorted({r["rule_id"] for r, e in expl if r["category"] in ("CODE", "WEB") and e.topic == "generic"})
+        self.r.add("4 Explain", "Every code and web issue maps to a specific explanation (no generic text)",
+                   not generic, ", ".join(generic))
+        sec = [e for r, e in expl if r["category"] == "SECRET"]
+        self.r.add("4 Explain", "Secret explanations say to revoke first and never show the value",
+                   bool(sec) and all("Revoke" in e.fix[0] and not any(v in e.what for v in secrets.values())
+                                     for e in sec))
 
     def phase_remediation(self) -> None:
         print("\n== Phase 5: remediation (upgrade requests -> rescan)")
@@ -294,7 +347,7 @@ class Vapt:
         assert self.web_vuln is not None
         self.web_vuln.state.xss_fixed = True  # the app now escapes the search term
         code3, _ = self.cli("scan-repo", "--name", "vuln-python-app")
-        xss = self.findings("vuln-python-app", "category='WEB' AND rule_id='DAST-XSS'")
+        xss = self.findings("vuln-python-app", "category='WEB' AND rule_id='DAST-XSS' AND file_path='/search'")
         self.r.add("5 Remediation", "Fixed XSS in the running app marked RESOLVED after rescan",
                    code3 == 0 and bool(xss) and all(r["status"] == "RESOLVED" for r in xss),
                    ", ".join(r["status"] for r in xss) or "missing")
@@ -304,7 +357,7 @@ class Vapt:
         self.cli("scan-repo", "--name", "vuln-python-app")
         last = self.q("SELECT status FROM scan_runs WHERE scanner='dast' AND scan_target=? ORDER BY id DESC LIMIT 1",
                       self.web_vuln.url)
-        web_now = self.findings("vuln-python-app", "category='WEB' AND rule_id != 'DAST-XSS'")
+        web_now = self.findings("vuln-python-app", "category='WEB' AND NOT (rule_id='DAST-XSS' AND file_path='/search')")
         self.r.add("5 Remediation", "App not running: web scan SKIPPED and its issues become UNVERIFIED (not resolved)",
                    bool(last) and last[0]["status"] == "SKIPPED" and bool(web_now)
                    and all(r["status"] == "UNVERIFIED" for r in web_now),
@@ -331,10 +384,19 @@ class Vapt:
                    {p.suffix for p in exports} >= {".md", ".html", ".json", ".csv"}, f"{len(exports)} files")
         code, out = self.cli("status")
         self.r.add("7 Reports", "status command summarises posture", code == 0 and "Repositories: 4" in out)
+        before = set((self.app / "reports" / "exports").glob("*_management_summary.html"))
+        code, out = self.cli("summary")
+        new = sorted(set((self.app / "reports" / "exports").glob("*_management_summary.html")) - before)
+        doc = new[-1].read_text(encoding="utf-8") if new else ""
+        self.r.add("7 Reports", "Management summary written in plain language (risk level, what to fix first, "
+                                "what was tested)",
+                   code == 0 and all(x in doc for x in ("What to fix first", "What was tested", "risk",
+                                                        "does not cover")), new[-1].name if new else out[-200:])
         raw = list((self.app / "reports").rglob("*_run*.json"))
-        self.r.add("7 Reports", "Raw Trivy, Gitleaks, Bandit and DAST JSON reports kept locally",
+        self.r.add("7 Reports", "Raw Trivy, Gitleaks, Bandit, code-scan and DAST JSON reports kept locally",
                    any("_trivy_" in p.name for p in raw) and any("_gitleaks_" in p.name for p in raw)
-                   and any("_bandit_" in p.name for p in raw) and any("_dast_" in p.name for p in raw),
+                   and any("_bandit_" in p.name for p in raw) and any("_dast_" in p.name for p in raw)
+                   and any("_codescan_" in p.name for p in raw),
                    f"{len(raw)} raw reports")
 
     def phase_leak_audit(self, secrets: dict[str, str]) -> None:
@@ -359,8 +421,9 @@ class Vapt:
                  f"Started: {started}  ", f"Finished: {datetime.now(timezone.utc).isoformat(timespec='seconds')}  ",
                  f"Lab: `{self.lab / 'targets'}`  ", f"Result: **{passed}/{total} checks passed** — "
                  f"{'PASS' if passed == total else 'FAIL'}", "",
-                 "Scope: static scanning (dependencies, IaC, secrets, code) plus a safe GET-only web scan (DAST) "
-                 "of two lab apps on 127.0.0.1. No manual penetration testing or exploitation.", "",
+                 "Scope: static scanning (dependencies, IaC, secrets, code in Python and other languages) plus a "
+                 "safe GET-only web scan (DAST) of two lab apps on 127.0.0.1, including a members area reached with a "
+                 "test account. No manual penetration testing or exploitation.", "",
                  "| Phase | Check | Result | Detail |", "|---|---|---|---|"]
         for c in self.r.checks:
             lines.append(f"| {c.phase} | {c.name} | {'PASS' if c.passed else '**FAIL**'} | "
@@ -393,6 +456,7 @@ class Vapt:
             return self._run(started)
         finally:
             marker.unlink(missing_ok=True)
+            os.environ.pop(LOGIN_ENV, None)
             for web in (self.web_vuln, self.web_clean):
                 if web is not None:
                     try:

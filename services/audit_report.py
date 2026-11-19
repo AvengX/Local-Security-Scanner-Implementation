@@ -269,6 +269,11 @@ def _tool_info(cfg: AppConfig) -> dict[str, dict]:
 
         dast = check_dast()
         out["dast"] = {"tool": dast, "path": "built-in", "version": dast.version, "sha256": None}
+    if cfg.sast.enabled and cfg.sast.other_languages:
+        from engine.scanner_health import check_codescan
+
+        cs = check_codescan()
+        out["codescan"] = {"tool": cs, "path": "built-in", "version": cs.version, "sha256": None}
     return out
 
 
@@ -303,10 +308,15 @@ def _commands(cfg: AppConfig, tools: dict[str, dict]) -> list[tuple[str, str]]:
             Path("<report.json>"), exclude_patterns(cfg.scan.skip_dirs, []), cfg.sast.skip_tests)
         argv = ["<generated bandit.ini>" if a.endswith("bandit.ini") else a for a in argv]
         cmds.append(("Bandit code scan (run inside <repo-root>)", show(argv, "python")))
+    if cfg.sast.enabled and cfg.sast.other_languages:
+        cmds.append(("Code scan, other languages (built in)", "pattern rules for JavaScript/TypeScript, HTML templates, "
+                     "PHP, Java, Go and C#, read as text inside <repo-root> (skip folders as for Bandit)"))
     if cfg.dast.enabled and cfg.dast.targets:
+        logins = sum(1 for t in cfg.dast.targets if t.login)
         cmds.append(("Web scan (DAST, built in)", f"GET-only crawl of each configured local address · max "
                      f"{cfg.dast.max_pages} pages, {cfg.dast.max_requests} requests, {cfg.dast.request_timeout}s per "
-                     "response"))
+                     "response" + (f" · {logins} address(es) sign in first with a test account (one POST to the "
+                                   "login form; password from an environment variable)" if logins else "")))
     return cmds
 
 
@@ -852,8 +862,9 @@ def render_audit_html(d: dict) -> str:
 
     # 11 ------------------------------------------------------------- code issues
     code = d.get("code", [])
-    s.append(h2(11) + "<p>Security bugs in the project's own Python code, found by Bandit. Bandit reads the code and "
-             "never runs it. Source code is not copied into this report.</p>")
+    s.append(h2(11) + "<p>Security bugs in the project's own code: Python found by Bandit, other languages "
+             "(JavaScript/TypeScript, HTML templates, PHP, Java, Go, C#) by the built-in check. The code is read, "
+             "never run. Source code is not copied into this report.</p>")
     if code:
         s.append(_table(["#", "Check", "Severity", "Confidence", "Issue", "File : line", "Fix", "Status"],
                         [[str(i), _e(r["rule_id"]) + (f"<br><span class='muted'>CWE-{_e(r['meta'].get('cwe'))}</span>"
@@ -914,9 +925,13 @@ def render_audit_html(d: dict) -> str:
         "Compared each successful scan with the previous one of the same scope: findings no longer reported become "
         "RESOLVED; findings a later scan failed to cover become UNVERIFIED (never silently resolved).",
         "Ran Bandit on the project's Python files (installed libraries such as .venv are skipped); a repository's own "
-        "<code>.bandit</code> file is ignored and code snippets are removed from the saved report.",
+        "<code>.bandit</code> file is ignored and code snippets are removed from the saved report. Ran the built-in "
+        "pattern check on JavaScript/TypeScript, HTML templates, PHP, Java, Go and C# files (minified files and "
+        "node_modules/vendor skipped; source text is never copied into the report).",
         "Tested each configured local web address of the running app with the built-in DAST scan: GET requests only, "
-        "same-site links only (log-out / delete links skipped), response bodies never stored.",
+        "same-site links only (log-out / delete links skipped), response bodies never stored. Where a test-account "
+        "login is configured, the scan first signs in with exactly one POST to the app's own login form (password "
+        "read from an environment variable, never stored) and also tests the pages behind it.",
         "Built this report from the database plus the raw JSON of the latest successful Trivy filesystem scan (CVSS, "
         "CWE, dates, references, package graph) and read-only git metadata.",
     ]
@@ -929,10 +944,12 @@ def render_audit_html(d: dict) -> str:
         f"Folders skipped while scanning: {_e(', '.join(d['skip_dirs']))}. Findings inside them are not reported.",
         "Secret detection is pattern-based: it can miss custom secrets and can flag test or example values.",
         "UNVERIFIED findings were seen before but not re-checked by a later successful scan; they are kept for review.",
-        "Code analysis (SAST) covers Python only and finds known risky patterns; it cannot find logic flaws such as "
-        "missing access checks. Lines marked <code># nosec</code> are not reported. Penetration testing of the running "
-        "application is limited to the built-in web scan: it tests pages reachable without logging in, sends GET "
-        "requests only, and does not replace manual penetration testing.",
+        "Code analysis (SAST) covers Python in depth (Bandit) and the most common risky patterns in JavaScript/"
+        "TypeScript, HTML templates, PHP, Java, Go and C# (built-in rules); it cannot find logic flaws such as missing "
+        "access checks. Lines marked <code># nosec</code> are not reported by Bandit. Penetration testing of the "
+        "running application is limited to the built-in web scan: it tests pages reachable without logging in (or "
+        "with the configured test account), sends GET requests only apart from the one sign-in, and does not "
+        "replace manual penetration testing.",
     ]
     if raw.error:
         limits.insert(0, f"Detailed advisory data is limited: {html.escape(raw.error)}.")

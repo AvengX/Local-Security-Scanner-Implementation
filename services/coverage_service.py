@@ -15,6 +15,8 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from engine.code_scanner import EXT_LANG
+
 LOCKFILES = {
     "package-lock.json": "npm", "npm-shrinkwrap.json": "npm", "yarn.lock": "yarn", "pnpm-lock.yaml": "pnpm",
     "poetry.lock": "poetry", "Pipfile.lock": "pipenv", "uv.lock": "uv", "pdm.lock": "pdm",
@@ -36,6 +38,7 @@ CONFIG_PATTERNS = {
     "Azure ARM / Bicep": ("azuredeploy.json", "*.bicep"),
 }
 _REQ = re.compile(r"^requirements.*\.txt$", re.I)
+CODE_SKIP = {"dist", "build", "coverage", "vendor", "bower_components", "bin", "obj", "target", "site-packages"}
 
 
 @dataclass
@@ -56,6 +59,7 @@ class RepoCoverage:
     config_files: list[tuple[str, str]] = field(default_factory=list)  # (kind, relative path)
     truncated: bool = False
     python_files: int = 0           # .py files the code scan (Bandit) can check
+    other_files: dict[str, int] = field(default_factory=dict)  # language -> files the built-in code scan reads
 
     @property
     def checkable_files(self) -> int:
@@ -95,6 +99,10 @@ def inspect_repository(name: str, path: str, skip_dirs: list[str], max_depth: in
         dirs[:] = [d for d in dirs if d.lower() not in skip and not d.startswith(".") and depth < max_depth]
         names = set(files)
         cov.python_files += sum(1 for f in files if f.endswith(".py"))
+        for f in files:
+            lang = EXT_LANG.get(os.path.splitext(f)[1].lower())
+            if lang and ".min." not in f.lower() and not set(Path(cur).relative_to(root).parts) & CODE_SKIP:
+                cov.other_files[lang] = cov.other_files.get(lang, 0) + 1
         if cov.truncated:
             continue  # keep counting Python files, stop listing dependency / config files
         for fname in sorted(files):

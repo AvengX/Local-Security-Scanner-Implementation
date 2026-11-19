@@ -18,9 +18,12 @@ Your running local apps ──► Web scan (DAST) ──┘
    **Gitleaks** finds passwords and keys in current files *and* in old commits.
    **Bandit** (SAST) reads your own Python code and finds risky patterns such as SQL built from strings,
    `shell=True`, `pickle.loads` or Flask `debug=True`. It never runs the code.
+   A built-in **code scan for other languages** does the same for JavaScript/TypeScript, HTML/Jinja templates, PHP,
+   Java, Go and C# (`eval`, `innerHTML`, SQL built from strings, TLS checks turned off, `|safe`, …).
    **Web scan (DAST)** tests your apps *while they run*, through their local address (for example
    `http://127.0.0.1:5000/`): missing security headers, unsafe cookies, exposed `.env`/`.git` files, debug consoles,
    stack traces, directory listing, open CORS, reflected XSS, SQL injection, open redirects and path traversal.
+   With a **test-account login** it also tests the pages behind sign-in.
 4. Results go into a local SQLite database, compared with the previous scan: new, still open, fixed, or unverified.
 5. The **dashboard** reads that database and shows it. It can also start scans in the background.
 
@@ -35,7 +38,8 @@ The scanner never changes your projects.
 | Vulnerability scanner | **Trivy** 0.76 (Aqua Security) | Vulnerable libraries, unsafe Docker/Kubernetes/Terraform settings, secrets in files |
 | Secret scanner | **Gitleaks** 8.30 | Passwords and keys in current files and in Git history |
 | Code scanner (SAST) | **Bandit** 1.9 (Python package, offline) | Security bugs in your own Python code |
-| Web scanner (DAST) | Built in (Python standard library `urllib`, `html.parser`) | Testing your running local web apps through their address |
+| Code scanner, other languages | Built in (pattern rules, Python standard library) | Risky patterns in JavaScript/TypeScript, HTML templates, PHP, Java, Go, C# |
+| Web scanner (DAST) | Built in (Python standard library `urllib`, `html.parser`, `http.cookiejar`) | Testing your running local web apps through their address, optionally signed in with a test account |
 | Version control | **Git** | Finding repositories, branch/commit details, history scans |
 | Database | **SQLite** (Python `sqlite3`) | Repositories, scan runs, findings and history, stored locally in `data\` |
 | Dashboard | **Streamlit** 1.67 | Web UI on `127.0.0.1:8501` (tables, filters, buttons that start background scans) |
@@ -101,7 +105,7 @@ repository_roots: ['C:\Users\you\source\repos', 'D:\Projects']
 
 **8. Optional: prove it works on this laptop.** Open **VAPT Lab → Run VAPT test**, or run:
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\run_vapt_test.ps1   # should report 73/73 PASS
+powershell -ExecutionPolicy Bypass -File .\scripts\run_vapt_test.ps1   # should report 88/88 PASS
 ```
 
 **Every day after that:** run `.\scripts\start.ps1` and use the dashboard.
@@ -138,6 +142,17 @@ Every page answers one question. Full guide: [docs/UI_GUIDE.md](docs/UI_GUIDE.md
 | Reports | How do I download or share the results? |
 | VAPT Lab | Does the scanner itself work? |
 | Settings | How do I change what is scanned, and how? |
+| Help & glossary | What do these words and statuses mean, and where do I start? |
+
+**Made to be understood**
+* **First-run tour:** the first time the dashboard opens, a five-step welcome explains what the app does and where to
+  start (Help → *Show the welcome tour* shows it again).
+* **In plain words:** every issue's details open with a box that says *what was found*, *why it matters*, *how an
+  attacker could use it*, *how to fix it* (numbered steps) and *how soon* (critical = today, high = this week, …),
+  without jargon. The scanner's technical text is still there under *Technical details*.
+* **Help & glossary page:** five steps to get started, what each page and status means, severity → how soon to
+  fix, what is and is not checked, and a searchable glossary of about 50 security words (CVE, XSS, CORS, …).
+* **Management summary** (Reports): a one-page, plain-language report for managers — see Reports below.
 
 **On every page**
 * **Sidebar → System health:** Trivy, Gitleaks, Bandit (code scan), web scan (number of app addresses),
@@ -175,13 +190,17 @@ and similar), with the **installed** version and the **version that fixes it**.
 * The **secret value is never stored or shown**.
 * Fix: rotate the key at the provider (new key, cancel the old one), then remove it from the code.
 
-**Code issues (SAST)**: security bugs in your own Python code, found by Bandit without running it.
+**Code issues (SAST)**: security bugs in your own code, found without running it: Python by Bandit, and
+JavaScript/TypeScript, HTML/Jinja templates, PHP, Java, Go and C# by the built-in check (check IDs such as
+**JS-EVAL**, **JS-INNERHTML**, **TPL-SAFE-FILTER**, **PHP-SQL-CONCAT**). Minified files and `node_modules`/`vendor`
+are skipped, and source code is never copied into the results.
 * Each row gives the check ID (for example **B608** = SQL built from strings), severity, **confidence** (how sure
   Bandit is), file and line. Click a row for the plain-language fix and the CWE weakness type.
 * Installed libraries (`.venv`, `node_modules`, …) are skipped, and a project's own `.bandit` file is ignored so it
   cannot hide problems. `assert` in test files is not reported (that is how tests work).
 * A real false positive can be marked in the code with `# nosec B608` plus a short reason.
-* Only Python is checked today; JavaScript and other languages are not.
+* *What was checked* lists Python files and files per other language for each project. The check for other
+  languages can be turned off in Settings.
 
 **Web app issues (DAST)**: problems found by testing your apps while they run.
 * **Setup:** Settings → *Web scan (DAST)* → add a row: the project and the address where its app runs (for example
@@ -197,8 +216,14 @@ and similar), with the **installed** version and the **version that fixes it**.
   the app; no proxy is used; page contents are never stored (an exposed `.env` is recorded by name and size only).
 * Each row shows the check ID (for example **DAST-XSS**), severity, page and parameter, and the app address. Click it
   for the evidence, the fix and the CWE weakness type.
-* Limits: pages behind a login are not tested, JavaScript-only apps (for example Streamlit) get the header, cookie
-  and file checks but have few links to follow, and it does not replace a manual penetration test.
+* **Pages behind a login:** add the login page, a **test** account's user name and the *name* of an environment
+  variable that holds its password (for example `LSS_MYAPP_PASSWORD`; set it with `setx LSS_MYAPP_PASSWORD "…"` and
+  restart the dashboard). The scan signs in with exactly one POST to the app's own login form (CSRF tokens are
+  copied automatically), then also crawls the page shown after signing in. The password is never written to the
+  config, the database, the reports or the logs. A wrong password makes the web scan *fail* (nothing is marked
+  fixed). *What was tested* shows whether each address was scanned signed in.
+* Limits: JavaScript-only apps (for example Streamlit) get the header, cookie and file checks but have few links to
+  follow, and it does not replace a manual penetration test.
 
 **Misconfigurations**: unsafe settings in Dockerfiles, Kubernetes or Terraform, for example "container runs as root".
 Click a row for the fix. The page only appears in the sidebar when a monitored project contains a Dockerfile,
@@ -223,6 +248,10 @@ many libraries Trivy could actually check — libraries without an exact version
 instead of claiming a clean result. Misconfigurations lists the configuration files it checked.
 
 **Reports**: downloads.
+* **Management summary** (all projects or one): click **Generate summary** for a plain-language report a manager can
+  read: overall risk level, a table per project, the ten things to fix first written as actions ("Update the
+  library jinja2 from 2.10 to 3.1.5", "Turn debug off"), what was and was not tested, progress over the last 30 days
+  and next steps. Print → Save as PDF for a PDF. CLI: `python run_scan.py summary`.
 * Choose *all projects* or *one project*, then download **CSV**, **JSON**, **Markdown** or **HTML**.
 * **Save all formats to disk** writes them to `reports\exports`.
 * **Detailed audit report** (one project): click **Generate audit report** for a full VAPT-style report, then
@@ -231,11 +260,11 @@ instead of claiming a clean result. Misconfigurations lists the configuration fi
   from the data, deduplicated counts, severity distribution, every vulnerability with CVSS / CWE / fixed versions /
   dependency path, direct vs transitive, remediation commands, secrets (never their values), misconfigurations,
   code issues, web app issues, references, and methodology with limitations and raw-report checksums.
-* The original Trivy, Gitleaks, Bandit and web-scan output of each scan is also downloadable.
+* The original Trivy, Gitleaks, Bandit, code-scan and web-scan output of each scan is also downloadable.
 
 **VAPT Lab**: a self-test for the scanner.
-* **Run VAPT test** builds 4 practice projects with planted problems (old libraries, fake keys, unsafe settings, insecure Python code, plus one clean project) and starts 2 practice web apps on 127.0.0.1 (one unsafe, one done right), scans them, and checks 73 expectations.
-* Shows the result (for example 73/73), expected versus actual for every check, and past runs.
+* **Run VAPT test** builds 4 practice projects with planted problems (old libraries, fake keys, unsafe settings, insecure Python, JavaScript and template code, plus one clean project) and starts 2 practice web apps on 127.0.0.1 (one unsafe with a members area behind a login, one done right), scans them, and checks 88 expectations — including that every finding has a plain-language explanation.
+* Shows the result (for example 88/88), expected versus actual for every check, and past runs.
 * It never touches your real projects.
 
 **Settings**
@@ -264,6 +293,8 @@ download a summary from **Reports** if someone else needs it.
 | Trivy | `fs` (vuln, misconfig, secret, license), `config`, `image`, CycloneDX SBOM, severity filter, offline flags, DB update, version-aware flags |
 | Gitleaks | `git` (history, `--log-opts`) and `dir` (working tree) modes, custom config/allowlists, `--redact` |
 | DAST (built in) | Safe dynamic testing of running local web apps: loopback-only (checked in config and on every request), GET-only, destructive links skipped, request/page/time limits, earlier findings re-tested first, app-down = skipped + unverified, response bodies never stored |
+| Code scan, other languages (built in) | Text pattern rules only (nothing is run or imported); skip folders, minified files, node_modules/vendor; files over 1.5 MB skipped and listed; matched source text never stored |
+| DAST login (optional) | One POST to the app's own sign-in form, same origin only; password read from an environment variable at scan time, never stored; config errors never echo input values; wrong password = FAILED run |
 | SAST (Bandit) | Static analysis of Python code, offline; own `--ini` (repository `.bandit` ignored), skip folders, `sast.skip_tests`, code snippets and password values removed from stored results and saved reports |
 | Orchestration | scan-all / scan-repo, bounded concurrency, per-repo + job locks, timeouts, Ctrl+C cancellation, per-scan isolation, batch summaries |
 | Storage | SQLite with FKs, WAL, transactions, indexes, migrations, duplicate prevention, retention |
@@ -275,11 +306,11 @@ download a summary from **Reports** if someone else needs it.
 ## 3. Architecture
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 ```
-Discovery → Orchestrator → (Trivy | Gitleaks | Bandit | DAST) → JSON parser/normaliser → Comparison → SQLite → Analytics → Dashboard → Exports
+Discovery → Orchestrator → (Trivy | Gitleaks | Bandit | code scan | DAST) → JSON parser/normaliser → Comparison → SQLite → Analytics → Dashboard → Exports
 ```
 
 ## 4. Prerequisites
-Windows 10/11, PowerShell 5.1+, Python 3.12+ (tested 3.14.7), Git, Trivy (tested 0.76.2), Gitleaks (tested 8.30.1). Bandit 1.9.4 is installed from requirements.txt. The web scan (DAST) is built in.
+Windows 10/11, PowerShell 5.1+, Python 3.12+ (tested 3.14.7), Git, Trivy (tested 0.76.2), Gitleaks (tested 8.30.1). Bandit 1.9.4 is installed from requirements.txt. The code scan for other languages and the web scan (DAST) are built in.
 
 ## 5. Windows installation
 ```powershell
@@ -368,8 +399,9 @@ Downloads are restricted to files registered in the DB **and** located inside `r
 
 ## 18. Security limitations
 See [docs/SECURITY.md](docs/SECURITY.md). In short: detection is limited to Trivy/Gitleaks/Bandit rules and DB
-freshness; SAST covers Python only and finds known risky patterns, not logic flaws such as missing access checks;
-the web scan (DAST) tests local apps without logging in and with GET requests only, so it does not
+freshness; SAST covers Python in depth and the most common risky patterns in JavaScript/TypeScript, templates, PHP, Java, Go
+and C#, not logic flaws such as missing access checks;
+the web scan (DAST) tests local apps with GET requests only (plus one sign-in POST when a test account is set), so it does not
 replace a manual penetration test; raw Trivy reports may contain masked code context — keep `reports/` private; no app-level auth
 (loopback-only); OS application-control policies may block scanners and are reported, not bypassed.
 
@@ -386,7 +418,7 @@ randomly generated fake tokens (never real credentials) and are skipped if a too
 .\scripts\run_vapt_test.ps1 -Dashboard
 ```
 Builds a lab of intentionally vulnerable repositories, scans it with the real application and verifies
-73 PASS/FAIL checks (CVEs, IaC misconfigurations, secrets incl. Git history, SAST code issues, DAST web issues, false positives, remediation,
+88 PASS/FAIL checks (CVEs, IaC misconfigurations, secrets incl. Git history, SAST code issues in Python and other languages, DAST web issues incl. behind a login, plain-language explanations, false positives, remediation,
 offline mode, reports, secret-leak audit). Scope and details: [docs/VAPT_TEST.md](docs/VAPT_TEST.md).
 
 ### Sharing with someone else

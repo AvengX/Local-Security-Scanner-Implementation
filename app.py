@@ -19,8 +19,9 @@ from pydantic import ValidationError  # noqa: E402
 st.set_page_config(page_title="Local Security Scanner", page_icon=str(ROOT / "dashboard" / "assets" / "emblem.svg"),
                    layout="wide", initial_sidebar_state="auto")
 
-from dashboard import (code_issues, findings, history, misconfigurations, overview, reports,  # noqa: E402
-                       repositories, secrets, settings, vapt, vulnerabilities, web_issues)
+from dashboard import (code_issues, findings, help, history, misconfigurations, overview,  # noqa: E402
+                       reports, repositories, secrets, settings, vapt, vulnerabilities, web_issues)
+from dashboard.tour import maybe_show_tour  # noqa: E402
 from dashboard.common import (PAGES, get_config, get_conn, inject_css, misconfig_relevant, notice,  # noqa: E402
                               render_sidebar, sync_roots)
 from utils.logger import setup_logging  # noqa: E402
@@ -59,6 +60,7 @@ def main() -> None:
         "reports": page(reports.render, "Reports", ":material/summarize:", "reports"),
         "vapt": page(vapt.render, "VAPT Lab", ":material/science:", "vapt-lab"),
         "settings": page(settings.render, "Settings", ":material/settings:", "settings"),
+        "help": page(help.render, "Help & glossary", ":material/help:", "help"),
     }
     conn = get_conn(cfg)
     sync_roots(cfg, conn)
@@ -75,10 +77,11 @@ def main() -> None:
     nav = st.navigation({
         "Monitor": monitor,
         "Operate": [pages["repositories"], pages["history"], pages["reports"], pages["vapt"]],
-        "System": [pages["settings"]],
+        "System": [pages["settings"], pages["help"]],
     })
     with st.sidebar:
         render_sidebar(cfg, conn)
+    maybe_show_tour(conn)
     nav.run()
 
 

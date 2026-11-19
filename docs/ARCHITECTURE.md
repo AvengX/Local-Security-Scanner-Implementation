@@ -13,6 +13,7 @@ Repository Discovery Engine  (engine/repository_discovery.py)
      ▼              ▼                 ▼                  ▼                   ▼
   TrivyScanner   GitleaksScanner   BanditScanner (SAST)  DastScanner (DAST)  (SBOM / image jobs via Trivy)
   engine/trivy_scanner.py   engine/gitleaks_scanner.py   engine/sast_scanner.py   engine/dast_scanner.py
+  + CodeScanner (SAST, other languages): engine/code_scanner.py
      │  subprocess argument lists via engine/runner.py (no shell, timeouts, cancellation)
      ▼
   JSON Report Parser          (engine/report_parser.py)
@@ -92,3 +93,26 @@ Repository Discovery Engine  (engine/repository_discovery.py)
 * App not answering → `SKIPPED` with coverage, so open findings become UNVERIFIED (never RESOLVED).
 * Findings: category `WEB` (schema v3 migration), `file_path` = page path, metadata = url, parameter, params,
   evidence, CWE. Response bodies are never stored; the raw report lists pages tested, request counts and findings.
+* Optional login (`dast.targets[].login`): before the crawl the scanner GETs the login page, finds the form with a
+  password input, copies hidden fields (CSRF tokens), fills the user name and the password read from the
+  environment variable named in `password_env`, and sends exactly one POST (the only POST the `Client` allows, and
+  only to the same origin). The session lives in an in-memory cookie jar for that scan. Success = the page after
+  sign-in no longer shows a password box (or contains `logged_in_text`); otherwise the run is FAILED. The post-login
+  landing page is crawled too, so the members area is reached. The raw report records `logged_in: true/false`.
+
+## Code scan for other languages (built in)
+* `engine/code_scanner.py`: one job per repository (`Job("codescan", "multi")`, `sast.other_languages`). Walks the
+  repository (skip folders, `node_modules`, `vendor`, `dist`, `build`, minified `*.min.*`, files > 1.5 MB, lines
+  > 2000 chars, comment lines) and applies regex rules per language: JavaScript/TypeScript, HTML templates (Jinja,
+  EJS, Handlebars, …), PHP, Java, Go, C#. Each rule has severity, confidence, CWE, title and remediation.
+* Identity like Bandit: rule + file + hash of the normalised line + occurrence. The line text is only hashed; it is
+  never stored. Findings are category `CODE`, scanner `codescan`; the raw report lists files checked per language.
+
+## Plain-language explanations
+* `services/explain.py` maps every rule (DAST checks, code-scan rules, Bandit test IDs; CWE as a fallback) to a
+  topic with *what*, *why*, *attack*, *fix steps*; vulnerabilities, secrets, misconfigurations and licences get
+  templates filled from the finding (package, versions, commit). Severity gives *how soon*. Used by the dashboard
+  detail panel, the management summary and the VAPT checks (every finding must have a non-generic explanation).
+* `services/summary_report.py` builds the management summary (risk level, per-project table, top-10 actions grouped
+  by package or rule, what was tested from the latest runs, 30-day progress). `dashboard/help.py` and
+  `dashboard/tour.py` hold the Help/glossary page and the first-run tour (`tour_done` setting).

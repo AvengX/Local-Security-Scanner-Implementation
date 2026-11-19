@@ -297,6 +297,18 @@ div[class*="st-key-topbar"] [data-testid="stMarkdownContainer"] { margin-bottom:
 .lss-remed { border-left: 3px solid var(--c); background: rgba(8,13,24,.45); border-radius: 0 10px 10px 0; padding: .6rem .85rem;
   color: #E2E8F0; font-size: .86rem; line-height: 1.5; white-space: pre-wrap; }
 
+.lss-explain { border: 1px solid var(--lss-border); border-left: 3px solid var(--c); border-radius: 0 12px 12px 0;
+  background: rgba(8,13,24,.45); padding: .75rem 1rem; font-size: .9rem; line-height: 1.55; color: #E2E8F0; }
+.lss-explain h4 { margin: .55rem 0 .15rem; font-size: .8rem; letter-spacing: .04em; text-transform: uppercase;
+  color: var(--lss-faint); font-weight: 650; }
+.lss-explain h4:first-child { margin-top: 0; }
+.lss-explain p { margin: 0 0 .2rem; }
+.lss-explain ol { margin: .1rem 0 .2rem 1.1rem; padding: 0; }
+.lss-explain li { margin: .12rem 0; }
+.lss-explain .lss-urgent { display: inline-block; margin-top: .15rem; padding: .15rem .55rem; border-radius: 999px;
+  background: color-mix(in srgb, var(--c) 18%, transparent); color: #F8FAFC; font-weight: 600; font-size: .84rem; }
+.lss-explain .lss-note { margin-top: .5rem; color: #CBD5E1; font-size: .84rem; }
+
 /* Sidebar health panel */
 .lss-health { margin-top: .4rem; padding: .7rem .75rem; border: 1px solid #1A2740; border-radius: 12px; background: rgba(20,31,48,.55); }
 .lss-health-title { font-size: .68rem; letter-spacing: .12em; text-transform: uppercase; color: var(--lss-faint); font-weight: 700; margin-bottom: .35rem; }
