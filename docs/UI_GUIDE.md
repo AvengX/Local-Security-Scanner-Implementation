@@ -112,3 +112,9 @@ Defined in `dashboard/theme.py` and `.streamlit/config.toml`.
 * **Settings → Web scan (DAST):** *OpenAPI file* (file or app path) and *POST allowed* (comma-separated API paths).
 * **Web app issues → What was tested:** *API endpoints* column (tested / POST not allowed / no OpenAPI file). API
   findings show the method and the parameter (`name` for a query parameter, `body.field` for a JSON field).
+
+## Trends
+* Project and period filters; *Trends need a little history* while scans cover less than a week.
+* Charts are static Altair charts (no wheel-zoom, so the page scrolls over them) with hover tooltips; each has a
+  table underneath. Sections: open issues over time (by severity), new vs fixed per week, time to fix, open issues
+  by type, projects now vs 30 days ago.

@@ -186,3 +186,10 @@ Repository Discovery Engine  (engine/repository_discovery.py)
   (the API is fully re-tested every scan).
 * `_probe_files` also checks common documentation paths (`/openapi.json`, `/swagger.json`, `/v3/api-docs`,
   `/docs`, `/swagger-ui…`, `/api-docs`) on every web scan.
+
+## Trends
+* `services/trends_service.py` rebuilds the past from `findings` (first_seen, resolved_at for RESOLVED rows) and
+  `finding_triage.decided_at`: a problem (repository + dedup key) is open at time T if first seen by T, not resolved
+  by T and not decided by T. Points are end-of-day (≤ 31 days) or end-of-week. `new_vs_fixed` buckets first-seen and
+  resolved times per ISO week; `time_to_fix` uses resolved − first seen. `project_change` / `overall_change` compare
+  now with 30 days ago and report "not enough history" when the first successful scan is newer than that.

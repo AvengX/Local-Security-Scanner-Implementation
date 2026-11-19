@@ -20,7 +20,7 @@ st.set_page_config(page_title="Local Security Scanner", page_icon=str(ROOT / "da
                    layout="wide", initial_sidebar_state="auto")
 
 from dashboard import (code_issues, findings, help, history, misconfigurations, overview,  # noqa: E402
-                       reports, repositories, secrets, settings, vapt, vulnerabilities, web_issues)
+                       reports, repositories, secrets, settings, trends, vapt, vulnerabilities, web_issues)
 from dashboard.tour import maybe_show_tour  # noqa: E402
 from dashboard.common import (PAGES, get_config, get_conn, inject_css, misconfig_relevant, notice,  # noqa: E402
                               render_sidebar, sync_roots)
@@ -47,6 +47,7 @@ def main() -> None:
 
     pages = {
         "overview": page(overview.render, "Overview", ":material/space_dashboard:", "overview", default=True),
+        "trends": page(trends.render, "Trends", ":material/trending_down:", "trends"),
         "findings": page(findings.render, "Security Findings", ":material/bug_report:", "findings"),
         "vulnerabilities": page(vulnerabilities.render, "Vulnerabilities", ":material/deployed_code:",
                                 "vulnerabilities"),
@@ -76,7 +77,7 @@ def main() -> None:
             "(SELECT finding_id FROM finding_triage) LIMIT 1").fetchone():
         pages.pop("web")
     PAGES.update(pages)
-    monitor = [pages[k] for k in ("overview", "findings", "vulnerabilities", "secrets", "code", "web",
+    monitor = [pages[k] for k in ("overview", "trends", "findings", "vulnerabilities", "secrets", "code", "web",
                                          "misconfigurations")
                if k in pages]
     nav = st.navigation({

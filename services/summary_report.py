@@ -177,9 +177,13 @@ def build_summary(conn: sqlite3.Connection, cfg: AppConfig, repository_id: int |
     from services.triage_service import decisions as triage_decisions
 
     decided = triage_decisions(conn, repository_id)
+    from services.trends_service import overall_change
+
+    trend = overall_change(conn, repository_id, 30)
     label, colour, sentence = risk_level(totals)
     return {"generated_at": now.isoformat(), "projects": projects, "priorities": priorities, "totals": totals,
             "risk": (label, colour, sentence), "resolved_30": resolved_30, "new_30": new_30, "decisions": decided,
+            "trend": trend,
             "scope": repos[0]["name"] if repository_id is not None and repos else "All monitored projects",
             "app_version": __version__}
 
@@ -290,6 +294,13 @@ def render_summary_html(d: dict[str, Any]) -> str:
     s.append("<h2>4. Progress in the last 30 days</h2>"
              f"<p><b>{d['resolved_30']}</b> issue(s) fixed and confirmed by a re-scan · <b>{d['new_30']}</b> issue(s) "
              "found for the first time.</p>")
+    tr = d.get("trend") or {}
+    if tr.get("enough_history") and tr.get("change_pct") is not None:
+        word = "down" if tr["now"] < tr["then"] else ("up" if tr["now"] > tr["then"] else "unchanged")
+        s.append(f"<p><b>Open issues {word} {abs(tr['change_pct'])}%</b>: {tr['then']} open 30 days ago, "
+                 f"{tr['now']} open now. See the dashboard's Trends page for the weekly picture.</p>")
+    else:
+        s.append("<p class='muted'>A 30-day trend appears here once scans cover at least 30 days.</p>")
 
     s.append("<h2>5. What this check does not cover</h2><ul>"
              "<li>Business-logic flaws, for example whether one user can see another user's data.</li>"

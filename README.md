@@ -131,6 +131,7 @@ Every page answers one question. Full guide: [docs/UI_GUIDE.md](docs/UI_GUIDE.md
 | Page | Question it answers |
 |---|---|
 | Overview | How safe am I right now? |
+| Trends | Is it getting better or worse over time? |
 | Security Findings | What exactly is wrong, everywhere? |
 | Vulnerabilities | Which libraries I use have known security holes? |
 | Secrets | Where did passwords or API keys end up in my code? |
@@ -193,6 +194,16 @@ Every page answers one question. Full guide: [docs/UI_GUIDE.md](docs/UI_GUIDE.md
 * **Recommended actions:** a to-do list built from your results, for example "Upgrade happy-dom 20.14.6 → 21.0.4" or
   "Rotate credentials found in these files".
 * **Latest scan activity** and **Scanner health** panels.
+
+**Trends**: is security getting better or worse?
+* Choose *all projects* or one, and a period (30 / 90 / 180 / 365 days). Each chart has a table with the same numbers.
+* **Open issues over time** per severity (daily points up to 30 days, weekly beyond), **new vs fixed each week**,
+  **time to fix** per severity (average and typical days from first found to confirmed fixed, and how long the
+  still-open ones have waited), **open issues by type**, and **projects now vs 30 days ago** (better / worse /
+  same — or *not enough history yet* when a project was first scanned less than 30 days ago).
+* Built from the history every scan already records; issues marked as false positive / accepted / archived leave
+  the counts from the moment of that decision. The management summary adds a 30-day trend line once scans cover
+  30 days.
 
 **Security Findings**: every problem in every project, in one table.
 * **Filters:** project, severity, type, status, date, CVE, package or file. **Export CSV** saves the filtered list.
