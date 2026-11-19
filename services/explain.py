@@ -280,6 +280,22 @@ TOPICS: dict[str, Topic] = {
                   "The opened page gets a handle back to your tab.",
                   "A malicious linked page can silently replace your tab with a fake login page (tab-nabbing).",
                   ("Add rel=\"noopener noreferrer\" to links with target=\"_blank\".",), ()),
+    "api_auth": T("An API endpoint that the API description says needs a login answered a request without one.",
+                  "Whoever can reach the app can call it directly - no account, no password.",
+                  "An attacker calls the endpoint from a script and reads or changes data meant only for logged-in "
+                  "users (or admins), without ever seeing the web pages.",
+                  ("Add the authentication check to this endpoint in the code (e.g. @login_required, a FastAPI "
+                   "Depends(get_current_user), or middleware that covers the whole /api path).",
+                   "Return 401 when no valid session or token is sent.",
+                   "If the endpoint is really meant to be public, remove the security requirement from the API "
+                   "description so it is honest."), ("Authentication", "API")),
+    "api_docs": T("The interactive API documentation (Swagger UI) or the API description file can be opened by "
+                  "anyone.",
+                  "It lists every endpoint, parameter and data format - a ready-made map for an attacker.",
+                  "Attackers read it to find hidden or admin endpoints and craft exact requests, instead of guessing.",
+                  ("Turn the docs off outside development (FastAPI: docs_url=None, openapi_url=None; flask-smorest / "
+                   "flasgger: disable in production config).",
+                   "Or put them behind a login."), ("API",)),
     # ---------------------------------------------------------------- Python-specific hygiene
     "bind_all": T("A server is set to listen on every network interface (0.0.0.0).",
                   "Anyone on the same network - office, café Wi-Fi - can reach it, not just you.",
@@ -326,7 +342,7 @@ RULE_TOPIC: dict[str, str] = {
     "DAST-VERSION": "version", "DAST-COOKIE-HTTPONLY": "cookie_httponly", "DAST-COOKIE-SAMESITE": "cookie_samesite",
     "DAST-COOKIE-SECURE": "cookie_secure", "DAST-CORS": "cors", "DAST-EXPOSED-FILE": "exposed_file",
     "DAST-DIR-LISTING": "dir_listing", "DAST-DEBUG": "debug", "DAST-ERROR-LEAK": "error_leak",
-    "DAST-TRACE": "trace",
+    "DAST-TRACE": "trace", "DAST-API-AUTH": "api_auth", "DAST-API-DOCS": "api_docs",
     # Built-in code scan (other languages)
     "JS-EVAL": "code_exec", "JS-INNERHTML": "xss_dom", "JS-DANGEROUS-HTML": "xss_dom", "JS-CMD-INJECTION": "cmd",
     "JS-STRING-TIMER": "code_exec", "JS-WEAK-RANDOM": "weak_random", "JS-STORAGE-TOKEN": "storage_token",

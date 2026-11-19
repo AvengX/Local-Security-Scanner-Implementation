@@ -47,7 +47,7 @@ log = get_logger(__name__)
 SCANNER = "dast"
 SCAN_TYPE = "web"
 CATEGORY = "WEB"
-ENGINE_VERSION = "1.1"
+ENGINE_VERSION = "1.2"
 MAX_BODY = 1_000_000
 USER_AGENT = "LocalSecurityScanner-DAST/1.0 (local test)"
 OWASP = "https://owasp.org/www-project-top-ten/"
@@ -135,6 +135,16 @@ CHECKS: dict[str, Check] = {
         "Open redirect (app sends users to any website)", "MEDIUM", 601,
         "Only redirect to paths inside the app or to an allow-list of known sites.",
         "https://cheatsheetseries.owasp.org/cheatsheets/Unvalidated_Redirects_and_Forwards_Cheat_Sheet.html"),
+    "DAST-API-AUTH": Check(
+        "API endpoint documented as needing a login answers without one", "HIGH", 306,
+        "Require authentication on this endpoint in the code (for example a login-required decorator or "
+        "dependency). The API description says it is protected, but it answered a request without credentials.",
+        "https://owasp.org/API-Security/editions/2023/en/0xa2-broken-authentication/"),
+    "DAST-API-DOCS": Check(
+        "API documentation is publicly reachable", "LOW", 200,
+        "Turn off the interactive API docs (Swagger UI, /openapi.json) outside development, or put them behind a "
+        "login, so attackers do not get a map of every endpoint.",
+        "https://owasp.org/API-Security/editions/2023/en/0xa9-improper-inventory-management/"),
     "DAST-TRAVERSAL": Check(
         "Path traversal (server files can be read through a parameter)", "HIGH", 22,
         "Never build file paths from request values; map allowed names to files, or resolve the path and check "
@@ -263,7 +273,8 @@ class Client:
         if parts.scheme not in ("http", "https") or not is_loopback_host(parts.hostname):
             raise ValueError(f"Refusing to contact a non-local address: {parts.hostname}")
         self.count += 1
-        if method not in ("GET", "TRACE") and not (method == "POST" and getattr(self, "_login_post", False)):
+        if method not in ("GET", "TRACE") and not (method == "POST" and (getattr(self, "_login_post", False)
+                                                                            or getattr(self, "_api_post", False))):
             raise ValueError(f"The web scan never sends {method} requests")
         req = urllib.request.Request(url, method=method, data=data,
                                      headers={"User-Agent": USER_AGENT, **(headers or {})})
@@ -357,6 +368,9 @@ class _State:
     cookies_seen: set[str] = field(default_factory=set)
     target: str = ""
     logged_in: bool = False
+    api_tested: list[str] = field(default_factory=list)
+    api_skipped_post: list[str] = field(default_factory=list)
+    api_source: str = ""
     landing: "_Page | None" = None   # page shown after signing in: crawled too, so the members area is reached
 
 
@@ -373,7 +387,7 @@ class DastScanner:
     # ------------------------------------------------------------------ findings
     def _add(self, st: _State, check_id: str, path: str, *, param: str | None = None, key: str = "",
              severity: str | None = None, evidence: str = "", params: list[str] | None = None,
-             title: str | None = None, confidence: str = "HIGH") -> None:
+             title: str | None = None, confidence: str = "HIGH", method: str = "GET", api: bool = False) -> None:
         c = CHECKS[check_id]
         path = _clean_path(path)
         where = path + (f" (parameter '{param}')" if param else "")
@@ -385,7 +399,8 @@ class DastScanner:
             remediation=c.remediation, reference_url=c.reference,
             metadata={"url": st.origin + path, "parameter": param, "params": params or [], "evidence": evidence,
                       "confidence": confidence, "cwe": c.cwe,
-                      "cwe_link": f"https://cwe.mitre.org/data/definitions/{c.cwe}.html", "method": "GET"},
+                      "cwe_link": f"https://cwe.mitre.org/data/definitions/{c.cwe}.html", "method": method,
+                      **({"api": True} if api else {})},
             identity=(check_id, path, param or "", key),
             dedup_key=sha256_hex("WEB", st.target, check_id, path, param or "", key),
         ))
@@ -458,6 +473,13 @@ class DastScanner:
                           title=f"Sensitive file can be downloaded: {path}",
                           evidence=f"{what[0].upper() + what[1:]} is served ({len(resp.body)} bytes; contents not "
                                    "stored).")
+        from engine.api_scanner import DOC_PATHS
+
+        for path, sig in DOC_PATHS:  # interactive API docs / descriptions left open
+            resp = client.request(st.origin + path)
+            if resp is not None and resp.status == 200 and resp.body and sig(resp.body[:200_000]):
+                self._add(st, "DAST-API-DOCS", path, evidence=f"The API documentation is served at {path}.")
+                break
         console = client.request(st.origin + "/console")
         if console is not None and console.status == 200 and "werkzeug" in console.text.lower() \
                 and "console" in console.text.lower():
@@ -622,8 +644,114 @@ class DastScanner:
         landing = urlsplit(resp.url)
         st.landing = _Page(_clean_path(landing.path), list(dict.fromkeys(k for k, _ in parse_qsl(landing.query, True))))
 
+    # ------------------------------------------------------------------ API (OpenAPI / Swagger)
+    def _send(self, client: Client, op: Any, origin: str, query: dict | None = None, body: Any = None,
+              ) -> Response | None:
+        url = op.url(origin, query)
+        if op.method == "get":
+            return client.request(url, headers={"Accept": "application/json"})
+        client._api_post = True  # noqa: SLF001 - allowed only for paths the user listed
+        try:
+            return client.request(url, method="POST", data=json.dumps(op.body if body is None else body).encode(),
+                                  headers={"Content-Type": "application/json", "Accept": "application/json"})
+        finally:
+            client._api_post = False  # noqa: SLF001
+
+    def _api_probe(self, st: _State, resp: Response | None, baseline: Response, op: Any, param: str, kind: str,
+                   mark: str = "") -> None:
+        if resp is None:
+            return
+        m = op.method.upper()
+        if kind == "xss" and _is_html(resp) and f"<{mark}>" in resp.text:
+            self._add(st, "DAST-XSS", op.path, param=param, key=m, method=m, api=True,
+                      evidence=f"{m} {op.path}: a test value with an HTML tag came back unescaped in an HTML answer.")
+        if kind in ("sql", "type"):
+            hit = next((s for s in SQL_ERRORS if s in resp.text and s not in baseline.text), None)
+            if hit:
+                self._add(st, "DAST-SQLI", op.path, param=param, key=m, method=m, api=True,
+                          evidence=f"{m} {op.path}: a quote character in '{param}' produced a database error ({hit}).")
+        if kind == "traversal":
+            for _, sig in TRAVERSAL_PAYLOADS:
+                if re.search(sig, resp.body) and not re.search(sig, baseline.body):
+                    self._add(st, "DAST-TRAVERSAL", op.path, param=param, key=m, method=m, api=True,
+                              evidence=f"{m} {op.path}: a ../ path in '{param}' returned a system file (not stored).")
+                    break
+        for marker_text, what in STACK_TRACES:
+            if marker_text in resp.text and marker_text not in baseline.text:
+                self._add(st, "DAST-ERROR-LEAK", op.path, param=param, key=m, method=m, api=True,
+                          confidence="MEDIUM" if marker_text.startswith("at ") else "HIGH",
+                          evidence=f"{m} {op.path}: unexpected input in '{param}' returned a {what} "
+                                   f"(HTTP {resp.status}).")
+                break
+
+    def _test_api(self, st: _State, client: Client, api: dict[str, Any]) -> None:
+        from engine import api_scanner as A
+
+        source = str(api.get("source") or "")
+        st.api_source = source
+        try:
+            if source.startswith(("/", "http://", "https://")):
+                url = source if source.startswith("http") else st.origin + source
+                if f"{urlsplit(url).scheme}://{urlsplit(url).netloc}" != st.origin:
+                    raise A.SpecError("The API description URL must be on the same app as the web address")
+                resp = client.request(url, headers={"Accept": "application/json, application/yaml"})
+                if resp is None or resp.status != 200:
+                    raise A.SpecError(f"API description not found at {url}"
+                                      + (f" (HTTP {resp.status})" if resp is not None else ""))
+                spec = A.parse_spec(resp.text)
+            else:
+                text, _ = A.read_spec_file(source, api.get("project"), list(api.get("roots") or []))
+                spec = A.parse_spec(text)
+        except A.SpecError as exc:
+            raise _Stop("FAILED", f"API testing not possible: {exc}") from exc
+        allowed = {p.rstrip("/") or "/" for p in api.get("post_allowed") or []}
+        anon: Client | None = None
+        for op in A.operations(spec):
+            if op.method == "post" and (op.path.rstrip("/") or "/") not in allowed:
+                st.api_skipped_post.append(op.key)
+                continue
+            baseline = self._send(client, op, st.origin)
+            if baseline is None:
+                continue
+            st.api_tested.append(op.key)
+            m = op.method.upper()
+            self._body_checks(st, baseline, op.path)
+            if op.secured:
+                check = baseline
+                if st.logged_in:  # ask again without the session cookie
+                    if anon is None:
+                        anon = Client(self.timeout, max(1, client.max_requests - client.count), client.deadline)
+                    check = self._send(anon, op, st.origin)
+                    client.count += 1
+                if check is not None and 200 <= check.status < 300:
+                    self._add(st, "DAST-API-AUTH", op.path, key=m, method=m, api=True,
+                              evidence=f"{m} {op.path} is documented as requiring authentication but answered "
+                                       f"HTTP {check.status} to a request without credentials.")
+            query = {p["name"]: p["value"] for p in op.params if p["in"] == "query"}
+            for p in [p for p in op.params if p["in"] == "query"]:
+                name = p["name"]
+                mark = A.marker()
+                self._api_probe(st, self._send(client, op, st.origin, {**query, name: f"\"'><{mark}>"}), baseline,
+                                op, name, "xss", mark)
+                self._api_probe(st, self._send(client, op, st.origin, {**query, name: f"{p['value']}'"}), baseline,
+                                op, name, "sql")
+                if name.lower() in FILE_PARAMS:
+                    self._api_probe(st, self._send(client, op, st.origin, {**query, name: TRAVERSAL_PAYLOADS[0][0]}),
+                                    baseline, op, name, "traversal")
+            if op.method == "post" and op.body is not None:
+                for field_name in A.string_fields(op.body):
+                    mark = A.marker()
+                    label = f"body.{field_name}"
+                    self._api_probe(st, self._send(client, op, st.origin, body=A.with_value(
+                        op.body, field_name, f"\"'><{mark}>")), baseline, op, label, "xss", mark)
+                    self._api_probe(st, self._send(client, op, st.origin, body=A.with_value(
+                        op.body, field_name, "test'")), baseline, op, label, "sql")
+                for field_name in A.numeric_fields(op.body):
+                    self._api_probe(st, self._send(client, op, st.origin, body=A.with_value(
+                        op.body, field_name, "abc'")), baseline, op, f"body.{field_name}", "type")
+
     def scan(self, target: str, report: Path, time_limit: int, seeds: list[tuple[str, list[str]]] | None = None,
-             login: Any = None) -> ScanExecution:
+             login: Any = None, api: dict[str, Any] | None = None) -> ScanExecution:
         cov = Coverage(SCANNER, SCAN_TYPE, target, frozenset({CATEGORY}), frozenset(SEVERITIES))
         ex = ScanExecution(SCANNER, SCAN_TYPE, target, "PENDING", cov, tool_version=ENGINE_VERSION,
                            command=["built-in DAST", target])
@@ -638,6 +766,7 @@ class DastScanner:
         seeds = seeds or []
         notes: list[str] = []
         seeds_done = 0
+        api_done = True
         try:
             try:
                 if login is not None:
@@ -657,6 +786,10 @@ class DastScanner:
             if missing is not None:  # error pages often leak more than normal pages
                 self._body_checks(st, missing, NOT_FOUND_PATH)
                 self._cookie_checks(st, missing, NOT_FOUND_PATH)
+            api_done = api is None or not api.get("source")
+            if not api_done:
+                self._test_api(st, client, api)  # before the crawl, so the request budget covers every endpoint
+                api_done = True
 
             first = _Page(start_path, list(dict.fromkeys(k for k, _ in parse_qsl(urlsplit(start.url).query, True))))
             queue: deque[tuple[_Page, bool]] = deque([(first, False)])
@@ -696,6 +829,11 @@ class DastScanner:
             if stop.status != "BUDGET":
                 ex.status, ex.error_message = stop.status, str(stop)
                 return ex
+            if not api_done:
+                ex.status = "FAILED"
+                ex.error_message = (f"Request limit ({self.max_requests}) reached before every API endpoint was "
+                                    "tested; raise dast.max_requests.")
+                return ex
             if seeds_done < len(seeds):
                 ex.status = "FAILED"
                 ex.error_message = (f"Request limit ({self.max_requests}) reached before every earlier finding was "
@@ -721,6 +859,8 @@ class DastScanner:
             "started_at": ex.started_at, "duration_seconds": ex.duration,
             "pages_tested": sorted(set(st.pages)), "requests_sent": client.count, "requests_failed": client.errors,
             "logged_in": st.logged_in,
+            "api_description": st.api_source or None, "api_operations_tested": st.api_tested,
+            "api_post_not_allowed": st.api_skipped_post,
             "checks": sorted(CHECKS),
             "findings": [{"check": f.rule_id, "severity": f.severity, "path": f.file_path,
                           "parameter": f.metadata.get("parameter"), "title": f.title,
@@ -740,4 +880,5 @@ def read_report_summary(path: str | None) -> dict[str, Any] | None:
     except (OSError, ValueError):
         return None
     return {"pages": len(data.get("pages_tested") or []), "requests": data.get("requests_sent", 0),
-            "logged_in": bool(data.get("logged_in"))}
+            "logged_in": bool(data.get("logged_in")), "api_tested": len(data.get("api_operations_tested") or []),
+            "api_skipped": len(data.get("api_post_not_allowed") or [])}

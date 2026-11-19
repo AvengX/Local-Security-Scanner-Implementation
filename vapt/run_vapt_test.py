@@ -129,6 +129,7 @@ class Vapt:
             "gitleaks": {"modes": ["git", "dir"]},
             "alerts": {"enabled": True, "min_severity": "HIGH", "windows_notification": False},
             "dast": {"targets": [{"repository": "vuln-python-app", "url": self.web_vuln.url,
+                                  "openapi": "api/openapi.yaml", "api_post_allowed": ["/api/echo"],
                                   "login": {"url": self.web_vuln.url + "login", "username": LOGIN_USER,
                                             "password_env": LOGIN_ENV}},
                                  {"repository": "clean-app", "url": self.web_clean.url},
@@ -278,6 +279,22 @@ class Vapt:
         self.r.add("4 Detection", "DAST: never followed log-out/delete links or sent POST requests",
                    self.web_vuln.state.destructive_hits == 0 and self.web_vuln.state.post_hits == 0,
                    f"{self.web_vuln.state.destructive_hits} destructive GETs, {self.web_vuln.state.post_hits} POSTs")
+        api_hits = {(r["rule_id"], r["file_path"]) for r in web if '"api": true' in (r["metadata_json"] or "")}
+        for rule, path, what in (("DAST-SQLI", "/api/users", "SQL injection through a query parameter"),
+                                 ("DAST-API-AUTH", "/api/admin/stats",
+                                  "endpoint documented as protected answers without a login"),
+                                 ("DAST-XSS", "/api/echo", "reflected XSS through an allowed POST JSON field"),
+                                 ("DAST-ERROR-LEAK", "/api/echo", "stack trace for a wrongly typed JSON field")):
+            self.r.add("4 Detection", f"API (OpenAPI): {what} ({rule} {path})", (rule, path) in api_hits,
+                       ", ".join(sorted(f"{a} {b}" for a, b in api_hits)))
+        docs = [r for r in web if r["rule_id"] == "DAST-API-DOCS"]
+        self.r.add("4 Detection", "API: publicly reachable Swagger UI reported (DAST-API-DOCS)", bool(docs),
+                   docs[0]["file_path"] if docs else "")
+        self.r.add("4 Detection", "API: POST only sent to the allowed endpoint, never to /api/delete-everything",
+                   self.web_vuln.state.forbidden_post_hits == 0 and self.web_vuln.state.api_post_hits > 0
+                   and self.web_vuln.state.post_hits == 0,
+                   f"{self.web_vuln.state.api_post_hits} allowed POSTs, "
+                   f"{self.web_vuln.state.forbidden_post_hits} to the forbidden endpoint")
         member = [r for r in web if r["rule_id"] == "DAST-XSS" and r["file_path"] == "/account/notes"]
         self.r.add("4 Detection", "DAST login: XSS behind the sign-in form found with the test account", bool(member),
                    member[0]["severity"] if member else ", ".join(sorted({r['file_path'] for r in web})))

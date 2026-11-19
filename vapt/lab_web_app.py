@@ -14,6 +14,7 @@ Standard library only; nothing here is reachable from other machines.
 from __future__ import annotations
 
 import html
+import json
 import secrets
 import sqlite3
 import threading
@@ -45,6 +46,8 @@ class LabState:
         self.destructive_hits = 0
         self.post_hits = 0          # POSTs other than the sign-in form: a safe scan sends none
         self.login_posts = 0
+        self.api_post_hits = 0      # POSTs to /api/echo (allowed in the lab configuration)
+        self.forbidden_post_hits = 0  # POSTs to /api/delete-everything: a safe scan sends none
         self.sessions: set[str] = set()
         self.csrf = secrets.token_hex(8)
 
@@ -95,6 +98,23 @@ def _handler(kind: str, state: LabState) -> type[BaseHTTPRequestHandler]:
                     return self._send(302, "", extra={"Location": "/account",
                                                       "Set-Cookie": f"auth={token}; HttpOnly; SameSite=Lax; Path=/"})
                 return self._send(200, self._login_page("Wrong user name or password"))
+            path = urlsplit(self.path).path
+            if kind == "vulnerable" and path == "/api/echo":
+                state.api_post_hits += 1
+                size = min(int(self.headers.get("Content-Length") or 0), 10_000)
+                try:
+                    data = json.loads(self.rfile.read(size) or b"{}")
+                except ValueError:
+                    data = {}
+                msg = data.get("message", "") if isinstance(data, dict) else ""
+                count = data.get("count", 1) if isinstance(data, dict) else 1
+                if not isinstance(count, int):  # type confusion: leaks a stack trace
+                    return self._send(500, "<html><body><pre>Traceback (most recent call last):\n  File "
+                                           "\"api.py\", line 9\nTypeError: can't multiply</pre></body></html>")
+                return self._send(200, f"<html><body>Echo: {msg}</body></html>")  # reflected XSS (lab only)
+            if kind == "vulnerable" and path == "/api/delete-everything":
+                state.forbidden_post_hits += 1
+                return self._send(200, '{"deleted": true}', "application/json")
             state.post_hits += 1
             self._send(405, "no")
 
@@ -136,6 +156,19 @@ def _handler(kind: str, state: LabState) -> type[BaseHTTPRequestHandler]:
                 return self._send(200, VULN_HOME, extra={"Set-Cookie": "session=lab123; Path=/"})
             if path == "/login":
                 return self._send(200, self._login_page())
+            if path == "/docs":
+                return self._send(200, "<html><head><title>Swagger UI</title></head><body><div id='swagger-ui'>"
+                                       "</div></body></html>")
+            if path == "/api/users":
+                try:
+                    with lock:  # deliberately string-built SQL (in-memory database, lab only)
+                        rows = db.execute("SELECT name FROM items WHERE name = '" + q.get("name", "") + "'").fetchall()
+                except sqlite3.Error as exc:
+                    return self._send(500, json.dumps({"error": f"sqlite3.OperationalError: {exc}"}),
+                                      "application/json")
+                return self._send(200, json.dumps({"users": [r[0] for r in rows]}), "application/json")
+            if path == "/api/admin/stats":  # documented as protected, but no check (lab only)
+                return self._send(200, json.dumps({"users": 1, "revenue": 1000}), "application/json")
             if path.startswith("/account"):
                 if not self._logged_in():
                     return self._send(302, "", extra={"Location": "/login"})

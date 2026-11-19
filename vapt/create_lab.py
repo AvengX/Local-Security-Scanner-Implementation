@@ -108,6 +108,62 @@ class Handler(BaseHTTPRequestHandler):
 
 HTTPServer(("127.0.0.1", int(sys.argv[1])), Handler).serve_forever()
 """
+# OpenAPI description of the unsafe lab web app's API (used by the API part of the web scan).
+LAB_OPENAPI = """openapi: 3.0.3
+info:
+  title: Lab shop API
+  version: "1.0"
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+paths:
+  /api/users:
+    get:
+      summary: Find users by name
+      parameters:
+        - name: name
+          in: query
+          schema:
+            type: string
+            example: shoe
+      responses:
+        "200":
+          description: Users
+  /api/admin/stats:
+    get:
+      summary: Admin statistics
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Statistics
+  /api/echo:
+    post:
+      summary: Echo a message (calculates only, stores nothing)
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+                  example: hello
+                count:
+                  type: integer
+                  example: 1
+      responses:
+        "200":
+          description: Echo
+  /api/delete-everything:
+    post:
+      summary: Deletes all data - must never be called by a scanner
+      responses:
+        "200":
+          description: Deleted
+"""
 CLEAN_TEMPLATE = """<!doctype html>
 <html><head><script src="/static/clean.js"></script></head>
 <body><h1>{{ title }}</h1><a href="https://example.com" target="_blank" rel="noopener noreferrer">Docs</a></body></html>
@@ -256,7 +312,8 @@ def create_lab(lab_dir: Path) -> dict[str, object]:
                                f'AWS_SECRET_ACCESS_KEY = "{s["aws_secret_access_key"]}"\n'),
                 "app/github.py": f'TOKEN = "{s["github_pat_current"]}"\n',
                 "app/db.py": insecure_code(s["sast_db_password"]),
-                "app/static/app.js": VULN_JS, "app/templates/profile.html": VULN_TEMPLATE})
+                "app/static/app.js": VULN_JS, "app/templates/profile.html": VULN_TEMPLATE,
+                "api/openapi.yaml": LAB_OPENAPI})
     _git(py, "add", "-A")
     _git(py, "commit", "-qm", "add cloud client")
     # Untracked installed-dependency folder (as a real virtualenv would be): must be skipped by scans.

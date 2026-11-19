@@ -79,6 +79,12 @@ GLOSSARY: dict[str, str] = {
     "False positive": "A finding that looks like a problem but is not one in your situation. Check the line; the "
                       "explanation says when the scanner is unsure.",
     "Remediation": "The fix: what to change so the problem goes away.",
+    "API": "Application Programming Interface: addresses (endpoints) that other programs call to get or send data, "
+           "usually JSON. They have no links, so the web scan only tests them when it is given an OpenAPI file.",
+    "OpenAPI / Swagger": "A standard file (openapi.json / .yaml) that describes an API: every endpoint, method and "
+                         "parameter. Settings -> Web scan -> OpenAPI file lets the scanner test the API from it.",
+    "Authentication": "Proving who you are (logging in, or sending a token). Endpoints that change or reveal "
+                      "private data should require it.",
     "Pre-commit hook": "A small script Git runs before every commit. The secret guard uses one to stop commits that "
                        "contain passwords or keys (Repositories → project → Secret guard).",
     "Webhook": "An internet address that receives a short message, used to post alerts to Teams, Slack or a phone "

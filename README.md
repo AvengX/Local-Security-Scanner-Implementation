@@ -105,7 +105,7 @@ repository_roots: ['C:\Users\you\source\repos', 'D:\Projects']
 
 **8. Optional: prove it works on this laptop.** Open **VAPT Lab → Run VAPT test**, or run:
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\run_vapt_test.ps1   # should report 98/98 PASS
+powershell -ExecutionPolicy Bypass -File .\scripts\run_vapt_test.ps1   # should report 104/104 PASS
 ```
 
 **Every day after that:** run `.\scripts\start.ps1` and use the dashboard.
@@ -263,6 +263,15 @@ are skipped, and source code is never copied into the results.
   until it answers (`start_wait`, default 60 s), scans it and stops the whole process tree again. An app that is
   already running is used as it is and never stopped. The app's output goes to `logs\apps\`. If it cannot start,
   the web scan *fails* with the reason and earlier web issues stay *Unverified*.
+* **API testing (OpenAPI / Swagger):** APIs have no links, so the crawl never finds them. Give the address an
+  *OpenAPI file* — a file in the project (e.g. `api/openapi.yaml`), a file in the scanner's `data\api_specs\`
+  folder, or a path on the running app such as `/openapi.json` (FastAPI serves one automatically). Every documented
+  endpoint is then called with example values from the description and checked for SQL errors, reflected script
+  (in HTML answers), path traversal, stack traces on wrongly typed input, and **endpoints documented as needing a
+  login that answer without one**. Only GET is used, except for paths you list under *POST allowed* (endpoints that
+  only calculate and store nothing, such as `/api/predict`); PUT, PATCH and DELETE are never sent. *What was tested*
+  shows how many endpoints were tested and how many POST endpoints were skipped. Every web scan also reports a
+  publicly reachable Swagger UI / API description (*DAST-API-DOCS*).
 * Limits: JavaScript-only apps (for example Streamlit) get the header, cookie and file checks but have few links to
   follow, and it does not replace a manual penetration test.
 
@@ -304,8 +313,8 @@ instead of claiming a clean result. Misconfigurations lists the configuration fi
 * The original Trivy, Gitleaks, Bandit, code-scan and web-scan output of each scan is also downloadable.
 
 **VAPT Lab**: a self-test for the scanner.
-* **Run VAPT test** builds 4 practice projects with planted problems (old libraries, fake keys, unsafe settings, insecure Python, JavaScript and template code, plus one clean project) and starts 2 practice web apps on 127.0.0.1 (one unsafe with a members area behind a login, one done right), scans them, and checks 98 expectations — including that every finding has a plain-language explanation and that triage decisions survive rescans.
-* Shows the result (for example 98/98), expected versus actual for every check, and past runs.
+* **Run VAPT test** builds 4 practice projects with planted problems (old libraries, fake keys, unsafe settings, insecure Python, JavaScript and template code, plus one clean project) and starts 2 practice web apps on 127.0.0.1 (one unsafe with a members area behind a login, one done right), scans them, and checks 104 expectations — including that every finding has a plain-language explanation and that triage decisions survive rescans.
+* Shows the result (for example 104/104), expected versus actual for every check, and past runs.
 * It never touches your real projects.
 
 **Settings**
@@ -464,7 +473,7 @@ randomly generated fake tokens (never real credentials) and are skipped if a too
 .\scripts\run_vapt_test.ps1 -Dashboard
 ```
 Builds a lab of intentionally vulnerable repositories, scans it with the real application and verifies
-98 PASS/FAIL checks (alerts, secret guard, triage decisions, installed versions, auto-start, CVEs, IaC misconfigurations, secrets incl. Git history, SAST code issues in Python and other languages, DAST web issues incl. behind a login, plain-language explanations, false positives, remediation,
+104 PASS/FAIL checks (API testing, alerts, secret guard, triage decisions, installed versions, auto-start, CVEs, IaC misconfigurations, secrets incl. Git history, SAST code issues in Python and other languages, DAST web issues incl. behind a login, plain-language explanations, false positives, remediation,
 offline mode, reports, secret-leak audit). Scope and details: [docs/VAPT_TEST.md](docs/VAPT_TEST.md).
 
 ### Sharing with someone else

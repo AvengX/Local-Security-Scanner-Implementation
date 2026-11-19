@@ -201,8 +201,12 @@ div[class*="st-key-panel"] { background: linear-gradient(180deg, rgba(25,38,58,.
 /* Inputs, tables, tabs, expanders */
 [data-baseweb="input"], [data-baseweb="select"] > div, [data-baseweb="textarea"] { border-radius: 10px !important; }
 [data-testid="stDataFrame"] { border: 1px solid var(--lss-border); border-radius: 12px; overflow: hidden; }
-[data-testid="stTabs"] [role="tablist"] { gap: .25rem; border-bottom: 1px solid var(--lss-border); }
-[data-testid="stTabs"] button[role="tab"] { border-radius: 10px 10px 0 0; padding: .45rem .9rem; }
+[data-testid="stTabs"] [role="tablist"] { gap: .5rem; border-bottom: 1px solid var(--lss-border); flex-wrap: wrap; }
+/* Streamlit renders tabs as <button> in older versions and <div role="tab"> in newer ones: style both. */
+[data-testid="stTabs"] [role="tab"] { border-radius: 10px 10px 0 0; padding: .5rem 1rem !important;
+  white-space: nowrap; transition: background .15s ease; }
+[data-testid="stTabs"] [role="tab"]:hover { background: rgba(56,189,248,.08); }
+[data-testid="stTabs"] [role="tab"][aria-selected="true"] { background: rgba(56,189,248,.12); }
 [data-testid="stExpander"] details { border-radius: 12px; border-color: var(--lss-border); background: rgba(20,31,48,.5); }
 [data-testid="stAlert"] { border-radius: 12px; }
 

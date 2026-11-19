@@ -68,6 +68,9 @@ def _web_checked(cfg, conn, empty: bool) -> None:  # noqa: ANN001
                      "Starts automatically": "yes" if tgt.start_command else "no",
                      "Last tested": fmt_ts(r["finished_at"]) if r else "—", "Result": result,
                      "Pages tested": str(summ["pages"]) if summ else "—",
+                     "API endpoints": (f"{summ.get('api_tested', 0)} tested"
+                                       + (f", {summ['api_skipped']} POST not allowed" if summ.get("api_skipped") else "")
+                                       if summ and tgt.openapi else ("no OpenAPI file" if not tgt.openapi else "—")),
                      "Requests": str(summ["requests"]) if summ else "—"})
     if empty:
         ran = [x for x in rows if x["Pages tested"] != "—"]

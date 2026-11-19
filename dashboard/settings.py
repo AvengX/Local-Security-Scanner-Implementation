@@ -124,7 +124,9 @@ def _dast_target(r: dict, old_login: dict, old_targets: dict | None = None) -> d
     old_targets = old_targets or {}
     repo, url = str(r.get("Project") or "").strip(), str(r.get("Address") or "").strip()
     out: dict = {"repository": repo, "url": url, "start_command": str(r.get("Start command") or "").strip(),
-                 "start_dir": str(r.get("Start folder") or "").strip()}
+                 "start_dir": str(r.get("Start folder") or "").strip(),
+                 "openapi": str(r.get("OpenAPI file") or "").strip(),
+                 "api_post_allowed": [x.strip() for x in str(r.get("POST allowed") or "").split(",") if x.strip()]}
     prev_target = old_targets.get((repo, url))
     if prev_target is not None:
         out["start_wait"] = prev_target.start_wait
@@ -236,10 +238,12 @@ def _config_tab(cfg: AppConfig) -> None:
         old_targets = {(tg.repository, tg.url): tg for tg in cfg.dast.targets}
         dast_rows = st.data_editor(
             [{"Project": tg.repository, "Address": tg.url, "Start command": tg.start_command,
-              "Start folder": tg.start_dir,
+              "Start folder": tg.start_dir, "OpenAPI file": tg.openapi,
+              "POST allowed": ", ".join(tg.api_post_allowed),
               "Login page": tg.login.url if tg.login else "", "Test user": tg.login.username if tg.login else "",
               "Password variable": tg.login.password_env if tg.login else ""} for tg in cfg.dast.targets] or
-            [{"Project": None, "Address": "", "Start command": "", "Start folder": "", "Login page": "",
+            [{"Project": None, "Address": "", "Start command": "", "Start folder": "", "OpenAPI file": "",
+              "POST allowed": "", "Login page": "",
               "Test user": "", "Password variable": ""}],
             num_rows="dynamic", width="stretch", key="dast_targets",
             column_config={
@@ -252,6 +256,13 @@ def _config_tab(cfg: AppConfig) -> None:
                     "--server.port 8502 --server.address 127.0.0.1. One program with arguments (no |, &, ;)."),
                 "Start folder": st.column_config.TextColumn(
                     "Start folder (optional)", help="Folder inside the project to run it in, e.g. landing-page"),
+                "OpenAPI file": st.column_config.TextColumn(
+                    "OpenAPI file (optional)", help="Describes the app's API so its endpoints are tested too: a file "
+                    "(e.g. api/openapi.yaml, relative to the project) or a path on the app such as /openapi.json."),
+                "POST allowed": st.column_config.TextColumn(
+                    "POST allowed (optional)", help="Comma-separated API paths that may receive POST test requests "
+                    "because they only calculate and store nothing, e.g. /api/predict. Everything else is tested "
+                    "with GET only; PUT, PATCH and DELETE are never sent."),
                 "Login page": st.column_config.TextColumn("Login page (optional)",
                                                           help="e.g. http://127.0.0.1:5000/login — same app"),
                 "Test user": st.column_config.TextColumn("Test user (optional)", help="A test account, never a real one"),

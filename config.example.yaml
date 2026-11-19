@@ -59,6 +59,8 @@ dast:                         # web scan (dynamic testing) of your own RUNNING a
   #    start_command: python app.py     # optional: started when nothing answers, stopped again after the scan
   #    start_dir: ''                    # optional: folder inside the project to run it in, e.g. landing-page
   #    start_wait: 60                   # seconds to wait for the app to answer
+  #    openapi: api/openapi.yaml        # optional: API description (file, or a path on the app like /openapi.json)
+  #    api_post_allowed: [/api/predict] # optional: API paths that may get POST tests (calculate only, store nothing)
   #    login:                           # optional: also test pages behind sign-in, with a TEST account
   #      url: http://127.0.0.1:5000/login
   #      username: test-user

@@ -195,6 +195,35 @@ class DastTarget(_Strict):
     start_dir: str = Field("", description="Folder inside the project to run the start command in (default: "
                                            "the project folder)")
     start_wait: int = Field(60, ge=5, le=600, description="Seconds to wait for the app to answer after starting")
+    openapi: str = Field("", description="Optional OpenAPI/Swagger description of the app's API: a file (absolute, or "
+                                         "relative to the project or the scanner folder) or a path on the app such "
+                                         "as /openapi.json")
+    api_post_allowed: list[str] = Field(default_factory=list,
+                                        description="API paths that may receive POST test requests because they "
+                                                    "only calculate and store nothing, e.g. ['/api/predict']")
+
+    @field_validator("openapi")
+    @classmethod
+    def _openapi(cls, value: str) -> str:
+        value = value.strip()
+        if value.startswith(("http://", "https://")):
+            return v.validate_dast_url(value)
+        if len(value) > 500 or "\n" in value:
+            raise ValueError("openapi must be a file path or a path such as /openapi.json")
+        return value
+
+    @field_validator("api_post_allowed")
+    @classmethod
+    def _post(cls, value: list[str]) -> list[str]:
+        out = []
+        for p in value:
+            p = p.strip()
+            if not p:
+                continue
+            if not p.startswith("/") or re.search(r"\s", p) or len(p) > 300:
+                raise ValueError(f"POST-allowed entries are API paths starting with /, e.g. /api/predict (got {p!r})")
+            out.append(p)
+        return list(dict.fromkeys(out))
 
     @field_validator("start_command")
     @classmethod

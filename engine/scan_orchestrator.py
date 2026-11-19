@@ -244,10 +244,14 @@ class ScanOrchestrator:
         d = self.cfg.dast
         tgt = d.target_for(repo_name, job.target)
 
+        api = ({"source": tgt.openapi, "post_allowed": tgt.api_post_allowed, "project": repo_path,
+                "roots": [self.cfg.data_dir / "api_specs", Path(__file__).resolve().parent.parent]}
+               if tgt and tgt.openapi else None)
+
         def run() -> ScanExecution:
             return DastScanner(d.request_timeout, d.max_pages, d.max_requests).scan(
                 job.target, report, self.cfg.scan.timeout_seconds, self._dast_seeds(repo_id, job.target),
-                login=tgt.login if tgt else None)
+                login=tgt.login if tgt else None, api=api)
 
         if not tgt or not tgt.start_command:
             return run()
@@ -328,9 +332,12 @@ class ScanOrchestrator:
         seeds: dict[tuple[str, tuple[str, ...]], tuple[str, list[str]]] = {}
         for r in rows:
             try:
-                params = [str(p) for p in (json.loads(r["metadata_json"] or "{}").get("params") or [])]
+                meta = json.loads(r["metadata_json"] or "{}")
             except ValueError:
-                params = []
+                meta = {}
+            if meta.get("api"):
+                continue  # API endpoints are all re-tested from the API description on every scan
+            params = [str(p) for p in (meta.get("params") or [])]
             path = r["file_path"] or "/"
             seeds[(path, tuple(sorted(params)))] = (path, params)
         return list(seeds.values())

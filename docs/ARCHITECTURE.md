@@ -170,3 +170,19 @@ Repository Discovery Engine  (engine/repository_discovery.py)
   not 0) / Missed runs (last run older than the period + 1 day).
 * The dashboard caches the task list for two minutes (`dashboard.common.schedule_tasks`) and clears it after every
   change. Creating, running or removing a task needs an explicit click (and a confirmation tick for create/remove).
+
+## API testing (OpenAPI / Swagger)
+* `engine/api_scanner.py` parses OpenAPI 3.x / Swagger 2.0 (JSON or YAML, local `$ref`s, ≤ 2 MB, ≤ 150
+  operations), collects GET and POST operations only, and builds example values (example / default / enum / by
+  type). `DastScanner._test_api` runs after the file probes and before the crawl (so the request budget covers every
+  endpoint; running out before the end = FAILED): baseline request, error-leak check, then probes per query
+  parameter (XSS marker, quote, traversal for file-like names) and per JSON string field (XSS marker, quote) and
+  numeric field (wrong type). Endpoints with a security requirement are re-requested without the session (a fresh
+  cookie-less client) — a 2xx answer is DAST-API-AUTH. POST is sent only to `api_post_allowed` paths (the client
+  refuses any other POST); PUT/PATCH/DELETE are never collected.
+* The spec source is a file (absolute, relative to the project, then `data/api_specs/`, then the scanner folder)
+  or a same-origin path / loopback URL fetched from the app. A missing or invalid description fails the web scan
+  (earlier findings stay UNVERIFIED). API findings carry `method` and `api: true` and are not used as crawl seeds
+  (the API is fully re-tested every scan).
+* `_probe_files` also checks common documentation paths (`/openapi.json`, `/swagger.json`, `/v3/api-docs`,
+  `/docs`, `/swagger-ui…`, `/api-docs`) on every web scan.
