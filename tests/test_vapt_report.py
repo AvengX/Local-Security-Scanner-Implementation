@@ -152,3 +152,24 @@ def test_folder_scan_error_is_shown(env, monkeypatch) -> None:  # noqa: ANN001
             break
         time.sleep(0.1)
     assert job.state == "error" and "not found" in (job.error or "")
+
+
+def test_preview_missing_pdf_is_a_clear_error(tmp_path: Path) -> None:
+    from services.pdf_preview import PreviewError, page_images
+
+    with pytest.raises(PreviewError, match="not found"):
+        page_images(tmp_path / "missing.pdf")
+
+
+@pytest.mark.skipif(pdf_export.find_browser() is None, reason="No Edge / Chrome on this machine")
+def test_preview_renders_every_page_and_caches(env) -> None:  # noqa: ANN001
+    from services.pdf_preview import page_images, pages_dir
+
+    populate(env)
+    conn = init_db(env.db_path)
+    f = vr.generate_vapt(conn, env, dao.list_repositories(conn)[0]["id"])
+    pages = page_images(f.pdf_path)
+    assert pages and all(p.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n" for p in pages)
+    assert (pages_dir(f.pdf_path) / "done.txt").read_text(encoding="ascii").strip() == str(len(pages))
+    first = pages[0].stat().st_mtime_ns
+    assert page_images(f.pdf_path) == pages and pages[0].stat().st_mtime_ns == first  # served from the cache

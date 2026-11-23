@@ -61,8 +61,19 @@ def _show_pdf(pdf: Path, key: str) -> None:
                        type="primary", key=f"dl_{key}", width="stretch")
     url = _view_url(pdf)
     c2.link_button("Open in new tab", url, icon=":material/open_in_new:", width="stretch")
-    # The browser's own PDF viewer, inside the page.
-    st.iframe(f"/{url}", height=880, alt=f"VAPT report {pdf.stem}")
+    # Chrome / Edge block their PDF viewer inside the page's sandboxed frames, so the PDF pages are shown as images
+    # (rendered by Windows' own PDF engine). "Open in new tab" still uses the browser's real PDF viewer.
+    from services.pdf_preview import PreviewError, page_images
+
+    try:
+        with st.spinner("Preparing the preview…"):
+            pages = page_images(pdf)
+    except PreviewError as exc:
+        notice("warn", "Preview not available", f"{exc} Use Download PDF or Open in new tab.")
+        return
+    with st.container(height=900, border=True):
+        for n, img in enumerate(pages, 1):
+            st.image(str(img), width="stretch", caption=f"Page {n} of {len(pages)}")
 
 
 @st.fragment(run_every=2)

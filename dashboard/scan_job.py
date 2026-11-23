@@ -99,6 +99,13 @@ def _run(job: ScanJob) -> None:
             for repo in scan.projects:
                 job.add(f"- Report for {repo['name']}: writing…")
                 f = generate_vapt(conn, cfg, repo["id"])
+                if f.pdf_path:  # prepare the in-page preview now, so the report shows at once
+                    from services.pdf_preview import PreviewError, page_images
+
+                    try:
+                        page_images(f.pdf_path)
+                    except PreviewError:
+                        pass  # the page explains it and still offers Download / Open in new tab
                 job.results.append({"project": f.project, "pdf": str(f.pdf_path) if f.pdf_path else None,
                                     "html": str(f.html_path), "counts": f.counts, "issues": f.issues,
                                     "error": f.error})
