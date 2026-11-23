@@ -5,6 +5,8 @@ headless = true
 enableCORS = true
 enableXsrfProtection = true
 runOnSave = false
+# Serves ./static at /app/static so the PDF report can be shown inside the page (local only).
+enableStaticServing = true
 
 [browser]
 gatherUsageStats = false

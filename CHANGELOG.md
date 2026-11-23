@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.3.0 — 2026-11-23
+**One simple flow:** paste a folder path, click Scan, get a VAPT report as a PDF.
+- The dashboard is now a single page: folder box (with Browse…), Scan button with live progress, the PDF shown in the
+  page, **Download PDF** and **Open in new tab**, and earlier reports. The scan runs in the background, so clicks and
+  refreshes do not interrupt it.
+- New VAPT report laid out like a professional security assessment: executive summary and overall posture, scope &
+  methodology, findings table (severity, CVSS 3.1, OWASP Top 10), finding details (location, confidence, effort,
+  roadmap, description, evidence, impact, fix), what's done well, remediation roadmap, not tested in this pass.
+- One report per project when the folder holds several projects; a folder without Git is scanned as one project.
+- CVSS 3.1 scores and CWE ids are now kept from Trivy results.
+- CLI: `run_scan.py vapt <folder>`.
+- Removed the multi-page dashboard (Overview, Findings, Trends, Settings and the rest). The engine, database and CLI
+  commands are unchanged; settings are edited in `config.yaml`.
+
 ## 1.2.0 — 2026-11-19
 **Coverage**
 - **Code scan (SAST)** with Bandit for Python, plus a built-in check for JavaScript/TypeScript, HTML/Jinja

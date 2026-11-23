@@ -193,20 +193,3 @@ def test_management_summary(env) -> None:  # noqa: ANN001
     assert "<script" not in doc
 
 
-def test_help_page_and_tour(env) -> None:  # noqa: ANN001
-    from streamlit.testing.v1 import AppTest
-
-    at = AppTest.from_string("import sys; sys.path.insert(0, r'%s')\nfrom dashboard import help\nhelp.render()"
-                             % Path(__file__).resolve().parent.parent, default_timeout=60).run()
-    assert not at.exception
-    text = " ".join(m.value for m in at.markdown)
-    assert "Start here" in text and "Glossary" in text and "XSS" in text
-    from database.db import connect, get_setting
-    from dashboard.tour import STEPS
-    from utils.config import load_config
-
-    assert len(STEPS) >= 5
-    from database.db import init_db
-
-    conn = init_db(load_config(Path(os.environ["LSS_CONFIG"])).db_path)
-    assert not get_setting(conn, "tour_done")

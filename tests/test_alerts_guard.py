@@ -90,16 +90,6 @@ def test_webhook_must_be_https() -> None:
     assert AppConfig.model_validate({"alerts": {"webhook_url": "https://example.com/h"}}).alerts.webhook_url
 
 
-def test_overview_shows_unread_alert(env, monkeypatch) -> None:  # noqa: ANN001
-    populate(env)
-    conn = init_db(env.db_path)
-    monkeypatch.setattr(al, "notify_windows", lambda t, b: "")
-    al.process_batch(conn, AppConfig.model_validate({**env.model_dump(), "alerts": {"min_severity": "LOW"}}), "b")
-    at = page_app("overview").run()
-    assert not at.exception
-    assert any("new alert" in (m.value or "") for m in at.markdown)
-
-
 # ------------------------------------------------------------------------------------------- secret guard
 def _repo(tmp_path: Path) -> Path:
     repo = tmp_path / "repo"

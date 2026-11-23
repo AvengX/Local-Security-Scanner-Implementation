@@ -203,3 +203,17 @@ Repository Discovery Engine  (engine/repository_discovery.py)
   `security-severity`, results for open and undecided findings only, `partialFingerprints` from the finding
   fingerprint, repository-relative `%SRCROOT%` paths (absolute paths inside the repository are cut), installed-
   version findings pointing at the project's requirements.txt / package.json, web findings as logical locations.
+
+## Scan a folder → VAPT report (1.3.0)
+* The dashboard (`app.py`) is one page. `dashboard/scan_job.py` runs the scan in a background thread and keeps the
+  progress record; the page refreshes itself every 2 s while it runs (`st.fragment(run_every=2)`).
+* `ScanOrchestrator.find_projects(folder)` discovers the Git repositories in the pasted folder (or the folder itself,
+  `repo_kind = "folder"`, with Gitleaks in `dir` mode only). `scan_folder()` adds them to the database without
+  deactivating any other project, allows the folder for this batch only, and scans the projects one after the other
+  with `on_project` / `on_job` callbacks.
+* `services/vapt_report.py` groups open, undecided findings into issues, maps them to OWASP Top 10 2021, takes CVSS
+  3.1 from Trivy (NVD first, then GHSA / vendor; stored in the finding metadata), assigns confidence, effort and
+  roadmap phase, and renders the HTML that `services/pdf_export.py` prints to PDF.
+* The PDF is shown in the page through Streamlit static serving (`static/reports/<random>.pdf`, copies removed after
+  a day; `server.enableStaticServing = true`). The folder is git-ignored.
+* CLI: `run_scan.py vapt <folder> [--no-pdf]`.

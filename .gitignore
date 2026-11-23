@@ -16,3 +16,4 @@ logs/*
 vapt_lab/
 external_targets/
 dist/
+static/

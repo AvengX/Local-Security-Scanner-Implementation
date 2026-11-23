@@ -77,9 +77,29 @@ def _trivy_vuln(v: dict, target: str, scan_type: str, scan_target: str) -> Norma
         fixed_version=fixed, file_path=pkg_path, title=v.get("Title") or vid,
         description=v.get("Description"), remediation=remediation, reference_url=v.get("PrimaryURL"),
         metadata={"status": v.get("Status"), "pkg_id": v.get("PkgID"), "target": target,
-                  "data_source": (v.get("DataSource") or {}).get("Name")},
+                  "data_source": (v.get("DataSource") or {}).get("Name"), **_cvss(v)},
         identity=(vid, pkg, installed, pkg_path),
     )
+
+
+def _cvss(v: dict) -> dict:
+    """Best CVSS v3 score/vector (NVD first, then the vendor / GitHub entries) and the first CWE id."""
+    out: dict = {}
+    sources = v.get("CVSS") or {}
+    order = ["nvd", "ghsa", "redhat", *[k for k in sources if k not in ("nvd", "ghsa", "redhat")]]
+    for key in order:
+        entry = sources.get(key) or {}
+        score = entry.get("V3Score") or entry.get("V40Score")
+        if score:
+            out["cvss_score"] = float(score)
+            vector = entry.get("V3Vector") or entry.get("V40Vector")
+            if vector:
+                out["cvss_vector"] = vector
+            break
+    cwes = [c for c in (v.get("CweIDs") or []) if isinstance(c, str) and c.upper().startswith("CWE-")]
+    if cwes:
+        out["cwe"] = cwes[0].split("-", 1)[1]
+    return out
 
 
 def _trivy_misconfig(m: dict, target: str, scan_type: str, scan_target: str) -> NormalizedFinding:

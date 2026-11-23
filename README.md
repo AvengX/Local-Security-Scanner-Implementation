@@ -1,33 +1,31 @@
 # Local Security Scanner
 
-**Version 1.2.0** — see [CHANGELOG.md](CHANGELOG.md) for what is new.
+**Version 1.3.0** — see [CHANGELOG.md](CHANGELOG.md) for what is new.
 
-A local-first, privacy-focused security monitoring platform for Windows that discovers every Git repository
-under folders you choose, scans them with **Trivy**, **Gitleaks**, **Bandit** (SAST) and a built-in **web scan** (DAST), stores results and history in
-**SQLite**, and presents them in a **Streamlit** dashboard bound to `127.0.0.1`. Source code, reports, the
-database and logs never leave your machine.
+A local, privacy-focused security assessment tool for Windows. **Paste the path of a project folder, click
+Scan, and get a VAPT report as a PDF** — viewable in the page or downloadable. The report follows the layout of a
+professional security assessment: executive summary, scope & methodology, findings table (severity, CVSS 3.1,
+OWASP), finding details (location, confidence, effort, description, evidence, impact, fix), what's done well,
+remediation roadmap and what was not tested.
 
 ## How it works
 ```
-Your project folders ──► Trivy + Gitleaks + Bandit ──► SQLite database ──► Dashboard (http://127.0.0.1:8501)
-Your running local apps ──► Web scan (DAST) ──┘
-        ▲                  (run_scan.py)        (data\ folder)              │
-        └────────────────── buttons start scans in the background ──────────┘
+Folder you paste ──► Trivy + Gitleaks + Bandit + code scan (+ web scan) ──► SQLite ──► VAPT report (HTML → PDF)
 ```
-1. You choose the folders that hold your projects (`repository_roots`).
-2. **Discovery** finds every Git repository inside them.
-3. **Trivy** checks dependencies for known vulnerabilities, Docker/IaC files for unsafe settings, and files for secrets.
-   **Gitleaks** finds passwords and keys in current files *and* in old commits.
-   **Bandit** (SAST) reads your own Python code and finds risky patterns such as SQL built from strings,
-   `shell=True`, `pickle.loads` or Flask `debug=True`. It never runs the code.
-   A built-in **code scan for other languages** does the same for JavaScript/TypeScript, HTML/Jinja templates, PHP,
-   Java, Go and C# (`eval`, `innerHTML`, SQL built from strings, TLS checks turned off, `|safe`, …).
-   **Web scan (DAST)** tests your apps *while they run*, through their local address (for example
-   `http://127.0.0.1:5000/`): missing security headers, unsafe cookies, exposed `.env`/`.git` files, debug consoles,
-   stack traces, directory listing, open CORS, reflected XSS, SQL injection, open redirects and path traversal.
-   With a **test-account login** it also tests the pages behind sign-in.
-4. Results go into a local SQLite database, compared with the previous scan: new, still open, fixed, or unverified.
-5. The **dashboard** reads that database and shows it. It can also start scans in the background.
+1. You paste a folder path (or click **Browse…**). Every Git repository inside it is a project; a folder with no
+   Git repository is scanned as one project.
+2. **Trivy** checks dependencies for known vulnerabilities (with CVSS scores), the exact versions installed in
+   `.venv` / `node_modules`, and Docker / cloud files for unsafe settings.
+   **Gitleaks** finds passwords and keys in current files *and* in the Git history (values are never stored).
+   **Bandit** (Python) and a built-in **code scan** (JavaScript/TypeScript, HTML/Jinja templates, PHP, Java, Go, C#)
+   find risky code such as SQL built from strings, `eval`, `innerHTML` or TLS checks turned off.
+   If a local web address is configured for the project, the built-in **web scan (DAST)** probes the running app
+   (headers, cookies, exposed files, debug pages, XSS, SQL errors, open redirect, path traversal) — GET-only and
+   only on this computer.
+3. Results are grouped into readable issues (VAPT-01, VAPT-02, …) and written as one PDF per project, printed with
+   the Microsoft Edge / Chrome already on the computer.
+
+The same flow from the command line: `python run_scan.py vapt "D:\Projects\my-app"`.
 
 Nothing is uploaded. Only Trivy downloads its vulnerability list from the internet, and offline mode turns that off.
 The web scan only talks to apps on this computer (localhost / 127.0.0.1 / ::1).
@@ -128,230 +126,17 @@ Your `config.yaml`, database, reports and logs are git-ignored and left out of t
 your results. Scheduled scans must be set up separately on each laptop. More detail: [docs/SHARING.md](docs/SHARING.md).
 
 ## Using the dashboard
-Every page answers one question. Full guide: [docs/UI_GUIDE.md](docs/UI_GUIDE.md).
+One page. Full guide: [docs/UI_GUIDE.md](docs/UI_GUIDE.md).
 
-| Page | Question it answers |
-|---|---|
-| Overview | How safe am I right now? |
-| Trends | Is it getting better or worse over time? |
-| Security Findings | What exactly is wrong, everywhere? |
-| Vulnerabilities | Which libraries I use have known security holes? |
-| Secrets | Where did passwords or API keys end up in my code? |
-| Code issues | Which lines of our own code are written in a risky way? (SAST) |
-| Web app issues | What is wrong with our apps when they run? (DAST) |
-| Misconfigurations | Which Docker or cloud settings are unsafe? (shown only when a project has such files) |
-| Repositories | Which projects are watched, and how do I scan them? |
-| Scan History | What happened every time a scan ran? |
-| Reports | How do I download or share the results? |
-| VAPT Lab | Does the scanner itself work? |
-| Settings | How do I change what is scanned, and how? |
-| Help & glossary | What do these words and statuses mean, and where do I start? |
+1. Start it: `scripts\start.ps1`, then open http://127.0.0.1:8501.
+2. Paste the project folder path (or **Browse…**) and click **Scan**. Progress is shown live; the scan keeps
+   running if you click around or refresh the page.
+3. When it finishes, the PDF report opens in the page. Use **Download PDF** to save it or **Open in new tab** to
+   view it full-screen. A folder with several projects gives one report per project (pick one from the list).
+4. Earlier reports stay available under **Earlier reports** (files in `reports\vapt`).
 
-**Made to be understood**
-* **First-run tour:** the first time the dashboard opens, a five-step welcome explains what the app does and where to
-  start (Help → *Show the welcome tour* shows it again).
-* **In plain words:** every issue's details open with a box that says *what was found*, *why it matters*, *how an
-  attacker could use it*, *how to fix it* (numbered steps) and *how soon* (critical = today, high = this week, …),
-  without jargon. The scanner's technical text is still there under *Technical details*.
-* **Help & glossary page:** five steps to get started, what each page and status means, severity → how soon to
-  fix, what is and is not checked, and a searchable glossary of about 50 security words (CVE, XSS, CORS, …).
-* **Management summary** (Reports): a one-page, plain-language report for managers — see Reports below.
-
-**Alerts: hear about new problems without opening the dashboard**
-* After every scan — also the scheduled weekly one — findings seen for the **first time**, at or above the chosen
-  severity (default *High*) and not marked as false positive / accepted, become **one alert per scan**.
-* It appears at the top of the **Overview** until you press *Mark as read*, can pop up as a **Windows
-  notification** (built in, nothing to install), and can be sent to an **https webhook** (Teams, Slack, ntfy …).
-  Alerts only contain counts, project names, check IDs, packages and file paths — never secret values or code.
-* Settings → *Alerts*. Try it: `python run_scan.py test-alert`.
-
-**Secret guard: stop secrets before they are committed**
-* Repositories → click a project → *Secret guard* → **Install** (or `python run_scan.py guard install --name X`).
-  It adds `.git/hooks/pre-commit`, which runs Gitleaks on the **staged changes** at every commit (about a
-  second). A commit that contains a password, key or token is **blocked** with a plain explanation; the value is
-  never printed.
-* An existing pre-commit hook is kept and still runs first; *Remove* restores it. Projects with a custom hooks
-  folder (`core.hooksPath`, e.g. Husky) are not touched — the panel shows the line to add there. If Gitleaks is
-  missing or fails, the commit is allowed with a warning. `git commit --no-verify` skips it once; a test value can
-  be marked with a `gitleaks:allow` comment.
-* `python run_scan.py guard status` lists every project.
-
-**On every page**
-* **Sidebar → System health:** Trivy, Gitleaks, Bandit (code scan), web scan (number of app addresses),
-  vulnerability DB and results database.
-  Green = working, amber = needs attention (for example an old vulnerability list), red = not working (missing or blocked by Windows).
-  Running scans are listed underneath.
-* **Top bar:** page name, when the last scan finished, scanner status, vulnerability-list age, and **Refresh**.
-
-**Overview**: your security summary and the place to start.
-* **Search box:** type a CVE, package or file name to jump to matching findings.
-* **Security posture:** one headline based on the worst open problem.
-  *Critical exposure* (red) → *Elevated risk* (orange) → *Guarded* → *No open findings* (green).
-* **Cards:** repositories, scanned, critical, high, exposed secrets, code issues, web app issues, misconfigurations,
-  failed scans.
-* **Problems by project:** a plain table — vulnerable libraries, leaked secrets and unsafe settings per project,
-  with the most serious level. (No charts: every number is shown as text.)
-* The misconfigurations card and the unsafe-settings column are hidden while no project has anything for them
-  to check (see below).
-* **Recommended actions:** a to-do list built from your results, for example "Upgrade happy-dom 20.14.6 → 21.0.4" or
-  "Rotate credentials found in these files".
-* **Latest scan activity** and **Scanner health** panels.
-
-**Trends**: is security getting better or worse?
-* Choose *all projects* or one, and a period (30 / 90 / 180 / 365 days). Each chart has a table with the same numbers.
-* **Open issues over time** per severity (daily points up to 30 days, weekly beyond), **new vs fixed each week**,
-  **time to fix** per severity (average and typical days from first found to confirmed fixed, and how long the
-  still-open ones have waited), **open issues by type**, and **projects now vs 30 days ago** (better / worse /
-  same — or *not enough history yet* when a project was first scanned less than 30 days ago).
-* Built from the history every scan already records; issues marked as false positive / accepted / archived leave
-  the counts from the moment of that decision. The management summary adds a 30-day trend line once scans cover
-  30 days.
-
-**Security Findings**: every problem in every project, in one table.
-* **Filters:** project, severity, type, status, date, CVE, package or file. **Export CSV** saves the filtered list.
-* **Click a row** to see what the problem is, where (file and line), how to fix it, a reference link, and its
-  **history** (first found, every scan that saw it, when it was fixed).
-* **Status:** *Open* = still there, *Resolved* = a later scan confirmed it is gone,
-  *Unverified* = could not be re-checked, so it is kept rather than assumed fixed.
-* **Your decision (triage):** in a finding's details, mark it as a **false positive** (the scanner is wrong here),
-  an **accepted risk** (real, but accepted until a review date — at most a year; it comes back by itself then) or
-  **archived** (no longer relevant). A reason is always required and every decision, reopen and expiry is kept in
-  the finding's decision history. Decided findings leave the counts, the recommended actions and the reports'
-  to-do lists, but stay visible under **Status → Decided**, in the audit report's *Decisions recorded* table and in
-  the management summary's *Risks we accepted* section. A later scan never removes a decision; **Reopen** does.
-* **Old findings in skipped folders:** findings inside folders that scans now skip (for example `.venv`) can never
-  be re-checked. The findings pages offer **Archive N** for them in one click.
-
-**Vulnerabilities**: only security holes in packages your projects use (from `package-lock.json`, `requirements.txt`
-and similar), with the **installed** version and the **version that fixes it**.
-* **Installed versions:** libraries listed without an exact version (`numpy>=1.24`, or just `streamlit`) cannot be
-  matched to known flaws from the requirements file alone. When a project has its own environment (`.venv`, `venv`,
-  or `node_modules` without a lockfile), the scanner reads the exact installed versions from package metadata —
-  nothing is run or installed — and Trivy checks those. Packages already pinned in `requirements.txt` are skipped,
-  so nothing is counted twice. These findings show *installed packages (.venv)* as their location, and the fix says
-  to upgrade and then pin the version. *What was checked* lists each environment. Turn it off in Settings →
-  *Also check installed library versions*.
-
-**Secrets**: only leaked passwords, API keys and tokens.
-* **Found in** shows *Working tree* (in a file now) or *Git history* (committed in the past and still readable by anyone with the repository).
-* The **secret value is never stored or shown**.
-* Fix: rotate the key at the provider (new key, cancel the old one), then remove it from the code.
-
-**Code issues (SAST)**: security bugs in your own code, found without running it: Python by Bandit, and
-JavaScript/TypeScript, HTML/Jinja templates, PHP, Java, Go and C# by the built-in check (check IDs such as
-**JS-EVAL**, **JS-INNERHTML**, **TPL-SAFE-FILTER**, **PHP-SQL-CONCAT**). Minified files and `node_modules`/`vendor`
-are skipped, and source code is never copied into the results.
-* Each row gives the check ID (for example **B608** = SQL built from strings), severity, **confidence** (how sure
-  Bandit is), file and line. Click a row for the plain-language fix and the CWE weakness type.
-* Installed libraries (`.venv`, `node_modules`, …) are skipped, and a project's own `.bandit` file is ignored so it
-  cannot hide problems. `assert` in test files is not reported (that is how tests work).
-* A real false positive can be marked in the code with `# nosec B608` plus a short reason.
-* *What was checked* lists Python files and files per other language for each project. The check for other
-  languages can be turned off in Settings.
-
-**Web app issues (DAST)**: problems found by testing your apps while they run.
-* **Setup:** Settings → *Web scan (DAST)* → add a row: the project and the address where its app runs (for example
-  `http://127.0.0.1:5000/`). Start the app, then scan the project. If the app is not running, the web scan is
-  *skipped* and earlier web issues are kept as *Unverified* (never marked fixed).
-* The scan visits the start page, follows same-site links (up to 30 pages / 400 requests by default), and checks:
-  security headers (CSP, clickjacking, nosniff, HSTS), cookie flags, version disclosure, exposed files (`.env`,
-  `.git`, database files, SQL dumps), Flask/Werkzeug debugger and Django debug pages, stack traces, directory
-  listing, CORS, TRACE, and — on every URL parameter and GET form — reflected XSS, SQL errors, open redirects and
-  path traversal.
-* **Safe by design:** only addresses on this computer are accepted; only GET requests are sent (POST forms are never
-  submitted, so no data is changed); links such as *log out* or *delete* are never followed; redirects never leave
-  the app; no proxy is used; page contents are never stored (an exposed `.env` is recorded by name and size only).
-* Each row shows the check ID (for example **DAST-XSS**), severity, page and parameter, and the app address. Click it
-  for the evidence, the fix and the CWE weakness type.
-* **Pages behind a login:** add the login page, a **test** account's user name and the *name* of an environment
-  variable that holds its password (for example `LSS_MYAPP_PASSWORD`; set it with `setx LSS_MYAPP_PASSWORD "…"` and
-  restart the dashboard). The scan signs in with exactly one POST to the app's own login form (CSRF tokens are
-  copied automatically), then also crawls the page shown after signing in. The password is never written to the
-  config, the database, the reports or the logs. A wrong password makes the web scan *fail* (nothing is marked
-  fixed). *What was tested* shows whether each address was scanned signed in.
-* **Start the app automatically:** add a *Start command* (and optionally a *Start folder*) to the address, for
-  example `python app.py`, `venv\Scripts\python.exe app.py` with start folder `landing-page`, or
-  `.venv\Scripts\streamlit.exe run app.py --server.port 8502 --server.address 127.0.0.1 --server.headless true`.
-  When nothing answers at scan time the scanner starts the app (no shell, no window, in the project folder), waits
-  until it answers (`start_wait`, default 60 s), scans it and stops the whole process tree again. An app that is
-  already running is used as it is and never stopped. The app's output goes to `logs\apps\`. If it cannot start,
-  the web scan *fails* with the reason and earlier web issues stay *Unverified*.
-* **API testing (OpenAPI / Swagger):** APIs have no links, so the crawl never finds them. Give the address an
-  *OpenAPI file* — a file in the project (e.g. `api/openapi.yaml`), a file in the scanner's `data\api_specs\`
-  folder, or a path on the running app such as `/openapi.json` (FastAPI serves one automatically). Every documented
-  endpoint is then called with example values from the description and checked for SQL errors, reflected script
-  (in HTML answers), path traversal, stack traces on wrongly typed input, and **endpoints documented as needing a
-  login that answer without one**. Only GET is used, except for paths you list under *POST allowed* (endpoints that
-  only calculate and store nothing, such as `/api/predict`); PUT, PATCH and DELETE are never sent. *What was tested*
-  shows how many endpoints were tested and how many POST endpoints were skipped. Every web scan also reports a
-  publicly reachable Swagger UI / API description (*DAST-API-DOCS*).
-* Limits: JavaScript-only apps (for example Streamlit) get the header, cookie and file checks but have few links to
-  follow, and it does not replace a manual penetration test.
-
-**Misconfigurations**: unsafe settings in Dockerfiles, Kubernetes or Terraform, for example "container runs as root".
-Click a row for the fix. The page only appears in the sidebar when a monitored project contains a Dockerfile,
-docker-compose, Kubernetes, Helm or Terraform file, or has an open misconfiguration. Scans keep checking for
-misconfigurations either way, so the page comes back by itself as soon as such a file is added.
-
-**Repositories**: your projects, and where scans start.
-* **Discover repositories:** finds Git projects in your folders.
-* **Scan all repositories:** scans everything in the background. The **Offline scan** switch uses the saved vulnerability list only.
-* **Table:** status (Clean, Findings, Running, Queued, Failed, Not scanned), branch, last scan, duration, problem counts.
-* **Click a project** to get **Scan this repository**, shortcuts to its findings and history, and its last 10 scans with any errors.
-* Scan buttons are disabled while a scan is running, and the page updates itself when it ends.
-
-**Scan History**: a log of every scanner run.
-* **Cards:** runs, success rate, failures, average time.
-* **Table:** duration, findings, new and fixed counts, error message.
-* **Compare two scans:** pick two scans of the same project to see what is new and what was fixed.
-
-**Vulnerabilities / Misconfigurations when empty**: the page says *why*. It lists each dependency file and how
-many libraries Trivy could actually check — libraries without an exact version (e.g. `numpy` instead of
-`numpy==1.26.4`) or files Trivy doesn't read (e.g. `requirements-train.txt`) are not checked, and the page says so
-instead of claiming a clean result. Misconfigurations lists the configuration files it checked.
-
-**Reports**: downloads.
-* **Management summary** (all projects or one): click **Generate summary** for a plain-language report a manager can
-  read: overall risk level, a table per project, the ten things to fix first written as actions ("Update the
-  library jinja2 from 2.10 to 3.1.5", "Turn debug off"), what was and was not tested, progress over the last 30 days
-  and next steps. **Create PDF** makes a real PDF file (with the Microsoft Edge or Chrome already on the computer —
-  nothing to install). CLI: `python run_scan.py summary --pdf`.
-* Choose *all projects* or *one project*, then download **CSV**, **JSON**, **Markdown** or **HTML**.
-* **Save all formats to disk** writes them to `reports\exports`.
-* **Detailed audit report** (one project): click **Generate audit report** for a full VAPT-style report, then
-  download it as HTML, or press **Create PDF** for a PDF (CLI: `python run_scan.py audit --name X --pdf`). It has 14
-  numbered sections: repository and
-  scan metadata (commit, tool versions and binary SHA-256, exact commands, exit codes), an executive summary written
-  from the data, deduplicated counts, severity distribution, every vulnerability with CVSS / CWE / fixed versions /
-  dependency path, direct vs transitive, remediation commands, secrets (never their values), misconfigurations,
-  code issues, web app issues, references, and methodology with limitations and raw-report checksums.
-* **SARIF** (one project): **Download SARIF** gives a SARIF 2.1.0 file with the open, undecided findings —
-  upload it to GitHub (*Security → Code scanning*, or the `github/codeql-action/upload-sarif` action) to see each
-  issue on its line of code, or open it in VS Code with the *SARIF Viewer* extension. Paths are relative to the
-  repository, rules carry GitHub's `security-severity`, and secret values are never included. CLI:
-  `python run_scan.py sarif --name X`.
-* The original Trivy, Gitleaks, Bandit, code-scan and web-scan output of each scan is also downloadable.
-
-**VAPT Lab**: a self-test for the scanner.
-* **Run VAPT test** builds 4 practice projects with planted problems (old libraries, fake keys, unsafe settings, insecure Python, JavaScript and template code, plus one clean project) and starts 2 practice web apps on 127.0.0.1 (one unsafe with a members area behind a login, one done right), scans them, and checks 106 expectations — including that every finding has a plain-language explanation and that triage decisions survive rescans.
-* Shows the result (for example 106/106), expected versus actual for every check, and past runs.
-* It never touches your real projects.
-
-**Settings**
-* **Configuration:** project folders (**Browse for a folder…** opens the Windows folder picker), folders to skip (`node_modules`, `.venv`…), scan timeout, parallel scans, offline mode, scanners on or off, storage paths.
-  **Validate and save** backs up the old settings first. **Reset to defaults** asks for confirmation.
-* **Scanners & vulnerability DB:** tool status and versions; **Update vulnerability database** (needs internet).
-* **Database & backups:** size and health of the results database; **Back up database now**.
-* **Scheduling:** set up automatic scans right here. Pick *weekly* or *daily*, the time and the day, tick *I understand
-  this creates a Windows scheduled task for my user account* and press **Create scheduled scan** (the exact
-  PowerShell is shown first). Registered scans are listed with their next run, last run and last result, each with
-  **Run now** (to test it) and **Remove** (tick *Confirm* first). Tasks run as your user with limited rights, never
-  overlap, and start as soon as the computer is on again if a run was missed. The sidebar and the Overview show a
-  **Scheduled scan** health row: *Not set up*, *Weekly – next …*, *Last run failed* or *Missed runs*.
-
-**A typical routine:** **Repositories → Scan all** → read **Overview → Recommended actions** → rotate keys
-(**Secrets**) and upgrade packages (**Vulnerabilities**) → scan again. Fixed items turn *Resolved* →
-download a summary from **Reports** if someone else needs it.
+Advanced settings (web addresses for the live web scan, test-account login, skipped folders, tool paths) live in
+`config.yaml` — see `config.example.yaml`.
 
 ## 1. Overview
 * Engine (`engine/`) and CLI (`run_scan.py`) run independently of the dashboard — scheduled scans work with

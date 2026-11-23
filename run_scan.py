@@ -224,6 +224,40 @@ def cmd_summary(cfg: AppConfig, args: argparse.Namespace) -> int:
     return _maybe_pdf(path, args.pdf)
 
 
+def cmd_vapt(cfg: AppConfig, args: argparse.Namespace) -> int:
+    """Scan everything in one folder and write a VAPT report (PDF) for each project found in it."""
+    from database.db import init_db
+    from engine.scan_orchestrator import FolderScanError, ScanOrchestrator
+    from services.vapt_report import generate_vapt
+
+    def on_project(i: int, n: int, repo: dict) -> None:
+        print(f"[{i}/{n}] {repo['name']}  ({repo['path']})")
+
+    def on_job(job, summary) -> None:  # noqa: ANN001
+        if summary is not None:
+            print(f"    {job.scanner} {job.scan_type}: {summary.status} ({summary.findings} findings)")
+
+    try:
+        scan = ScanOrchestrator(cfg).scan_folder(args.folder, on_project=on_project, on_job=on_job)
+    except FolderScanError as exc:
+        print(str(exc))
+        return EXIT_USAGE
+    conn = init_db(cfg.db_path)
+    worst = EXIT_OK
+    try:
+        for repo in scan.projects:
+            f = generate_vapt(conn, cfg, repo["id"], pdf=not args.no_pdf)
+            counts = ", ".join(f"{v} {k.lower()}" for k, v in f.counts.items() if v) or "no open issues"
+            print(f"{f.project}: {f.issues} issue(s) - {counts}")
+            print(f"  Wrote {f.pdf_path or f.html_path}")
+            if f.error:
+                print(f"  PDF not created: {f.error}")
+                worst = EXIT_SCAN_FAILURES
+    finally:
+        conn.close()
+    return EXIT_SCAN_FAILURES if scan.batch.failed else worst
+
+
 def _maybe_pdf(path: Path, wanted: bool) -> int:
     if not wanted:
         print("Add --pdf to also create a PDF (uses Microsoft Edge / Chrome already on this computer).")
@@ -436,6 +470,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--config", help="Path to config.yaml (default: project config.yaml or LSS_CONFIG)")
     sub = p.add_subparsers(dest="command", required=True)
 
+    va = sub.add_parser("vapt", help="Scan everything in a folder and write a VAPT report (PDF) per project")
+    va.add_argument("folder", help="Folder to scan (a project, or a folder containing several projects)")
+    va.add_argument("--no-pdf", action="store_true", help="Write the HTML report only")
     sub.add_parser("init", help="Create config.yaml (if missing) and initialise the database")
     sub.add_parser("discover", help="Discover Git repositories under the configured roots")
 
@@ -498,7 +535,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 COMMANDS = {
-    "init": cmd_init, "discover": cmd_discover, "scan-all": cmd_scan_all, "scan-repo": cmd_scan_repo,
+    "vapt": cmd_vapt, "init": cmd_init, "discover": cmd_discover, "scan-all": cmd_scan_all, "scan-repo": cmd_scan_repo,
     "status": cmd_status, "report": cmd_report, "audit": cmd_audit, "summary": cmd_summary, "sarif": cmd_sarif, "test-alert": cmd_test_alert, "guard": cmd_guard, "update-databases": cmd_update_databases,
     "health": cmd_health, "schedule": cmd_schedule, "unschedule": cmd_unschedule, "prune": cmd_prune,
 }

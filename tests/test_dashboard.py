@@ -1,4 +1,4 @@
-"""Dashboard pages rendered headlessly with Streamlit's AppTest against isolated databases."""
+"""The one-page dashboard (scan a folder, get a VAPT PDF), rendered headlessly with Streamlit's AppTest."""
 
 from __future__ import annotations
 
@@ -21,8 +21,6 @@ from services import export_service as ex
 from utils.validators import SEVERITIES
 
 APP = str(Path(__file__).resolve().parent.parent / "app.py")
-PAGES = ["overview", "repositories", "findings", "vulnerabilities", "secrets", "code_issues", "web_issues", "misconfigurations", "history",
-         "reports", "vapt", "settings", "help", "trends"]
 
 
 @pytest.fixture
@@ -72,35 +70,6 @@ def page_app(page: str) -> AppTest:
 def test_full_app_boots(env) -> None:
     at = AppTest.from_file(APP, default_timeout=60).run()
     assert not at.exception, at.exception
-
-
-@pytest.mark.parametrize("page", PAGES)
-def test_pages_render_with_empty_database(env, page: str) -> None:
-    at = page_app(page).run()
-    assert not at.exception, at.exception
-
-
-@pytest.mark.parametrize("page", PAGES)
-def test_pages_render_with_data_and_failed_scan(env, page: str) -> None:
-    populate(env, failed=True)
-    at = page_app(page).run()
-    assert not at.exception, at.exception
-
-
-def test_findings_page_filters_interactively(env) -> None:
-    populate(env)
-    at = page_app("findings").run()
-    at.multiselect(key="all_sev").set_value(["CRITICAL"]).run()
-    assert not at.exception
-    assert "2 of 4 findings" in " ".join(m.value for m in at.markdown)
-
-
-def test_overview_shows_real_counts(env) -> None:
-    populate(env, failed=True)
-    at = page_app("overview").run()
-    html = " ".join(m.value for m in at.markdown)
-    assert "Critical" in html and "Failed scans" in html
-    assert "Vulnerability database missing" in html  # freshness surfaced honestly (no DB in test cache)
 
 
 def test_secret_value_absent_everywhere(env) -> None:
@@ -160,73 +129,7 @@ def test_settings_reject_non_loopback(env) -> None:
         AppConfig.model_validate({"excluded_dirs": ["a/b"]})
 
 
-def test_dead_running_scan_is_recovered_and_live_one_listed(env) -> None:
-    populate(env)
-    conn = init_db(env.db_path)
-    rid = dao.list_repositories(conn)[0]["id"]
-    dead = dao.create_scan_run(conn, rid, "trivy", "fs", ".", "x", 999999)
-    live = dao.create_scan_run(conn, rid, "gitleaks", "git", ".", "x", os.getpid())
-    from dashboard.common import get_conn, running_jobs
-
-    c = get_conn(env)
-    jobs = running_jobs(c)
-    assert [j["id"] for j in jobs] == [live] and jobs[0]["scanner"] == "gitleaks:git"
-    assert dao.get_scan_run(conn, dead)["status"] == "CANCELLED"
-    at = page_app("repositories").run()
-    assert not at.exception
-    assert "Scanning in progress" in " ".join(m.value for m in at.markdown)
-
-
 # ---------------------------------------------------------------- redesign (v1.1) regression tests
-def test_category_pages_and_clean_vs_no_data_states(env) -> None:
-    for page in ("vulnerabilities", "secrets", "misconfigurations"):
-        at = page_app(page).run()
-        assert not at.exception
-        text = " ".join(m.value for m in at.markdown)
-        assert "No repository folders configured" in text or "not been discovered" in text or "No scan data" in text
-    populate(env)
-    for page in ("vulnerabilities", "misconfigurations", "secrets"):
-        at = page_app(page).run()
-        assert not at.exception, page
-
-
-def test_no_scan_data_is_not_reported_as_clean(env) -> None:
-    conn = init_db(env.db_path)
-    repo_dir = Path(env.repository_roots[0]) / "Empty"
-    repo_dir.mkdir(exist_ok=True)
-    dao.sync_discovered(conn, [DiscoveredRepo("Empty", str(repo_dir), env.repository_roots[0])], env.repository_roots)
-    conn.close()
-    at = page_app("findings").run()
-    text = " ".join(m.value for m in at.markdown)
-    assert "No scan data yet" in text and "does not mean" in text
-
-
-def test_scanner_text_is_escaped_and_unsafe_links_dropped(env) -> None:
-    from dashboard import theme as t
-
-    assert "<img" not in t.notice("err", "x", "<img src=x onerror=alert(1)>")
-    assert t.safe_url("javascript:alert(1)") is None and t.safe_url("data:text/html,x") is None
-    assert t.safe_url("https://avd.aquasec.com/nvd/cve-2023-32681") is not None
-    populate(env)
-    conn = init_db(env.db_path)
-    conn.execute("UPDATE findings SET remediation=?, description=?, reference_url=?",
-                 ("<script>alert(1)</script>", "![x](http://example.invalid/beacon.png)", "javascript:alert(1)"))
-    conn.commit()
-    from dashboard.findings_view import _detail
-
-    row = an.findings_frame(conn).iloc[0]
-    script = "\n".join([
-        "import sys", f"sys.path.insert(0, r'{str(Path(APP).parent)}')",
-        "from database.db import init_db", "from services import analytics_service as an",
-        "from dashboard.findings_view import _detail", "from utils.config import load_config",
-        "c = init_db(load_config().db_path)", "_detail(c, an.findings_frame(c).iloc[0], 'all')"])
-    at = AppTest.from_string(script, default_timeout=60).run()
-    html = " ".join(m.value for m in at.markdown)
-    assert not at.exception and row is not None
-    assert "<script>" not in html and "&lt;script&gt;" in html
-    assert "javascript:alert" not in html and "<img" not in html
-
-
 def test_repository_state_and_distinct_counts(env) -> None:
     assert an.repository_state(None) == "NEVER"
     assert an.repository_state("COMPLETED,FAILED") == "FAILED"
@@ -250,64 +153,6 @@ def test_finding_history_and_index(env) -> None:
     assert "ix_changes_finding" in idx
 
 
-def test_settings_backup_before_save(env, monkeypatch) -> None:
-    from dashboard.settings import backup_config
-    from utils.config import save_config
-
-    monkeypatch.setattr("dashboard.settings.config_path", lambda: Path(os.environ["LSS_CONFIG"]))
-    before = Path(os.environ["LSS_CONFIG"]).read_text(encoding="utf-8")
-    dest = backup_config(env)
-    assert dest and dest.read_text(encoding="utf-8") == before
-    save_config(env, Path(os.environ["LSS_CONFIG"]))
-    assert len(list((env.data_dir / "config_backups").glob("config_*.yaml"))) == 1
-
-
-def test_vapt_page_without_and_with_results(env, tmp_path, monkeypatch) -> None:
-    import dashboard.vapt as vapt
-
-    monkeypatch.setattr(vapt, "LAB", tmp_path / "lab")
-    script = "\n".join(["import sys", f"sys.path.insert(0, r'{str(Path(APP).parent)}')", "from pathlib import Path",
-                        "import dashboard.vapt as v", f"v.LAB = Path(r'{tmp_path / 'lab'}')", "v.render()"])
-    res = AppTest.from_string(script, default_timeout=60).run()
-    assert not res.exception
-    assert "No results yet" in " ".join(m.value for m in res.markdown)
-    lab = tmp_path / "lab"
-    lab.mkdir()
-    (lab / "VAPT_TEST_RESULTS.json").write_text('{"started":"2026-11-17T04:28:28+00:00","finished":'
-                                                '"2026-11-17T04:29:17+00:00","passed":1,"total":2,"checks":['
-                                                '{"phase":"1 Health","name":"a","passed":true,"detail":""},'
-                                                '{"phase":"1 Health","name":"b","passed":false,"detail":"x"}]}',
-                                                encoding="utf-8")
-    res = AppTest.from_string(script, default_timeout=60).run()
-    assert not res.exception
-    text = " ".join(m.value for m in res.markdown)
-    assert "1/2" in text and "Checks by phase" in text and "1 failed" in text  # plain table, no chart
-
-
-def test_vapt_marker_detects_reused_pid(tmp_path) -> None:
-    import json as _json
-    import time as _time
-
-    from dashboard.vapt import marker_running
-    from utils.security import process_start_time
-
-    marker = tmp_path / "RUNNING.pid"
-    assert not marker_running(marker)                                       # no marker
-    me = os.getpid()
-    marker.write_text(_json.dumps({"pid": me, "start": process_start_time(me)}), encoding="utf-8")
-    assert marker_running(marker)                                           # this very process
-    marker.write_text(_json.dumps({"pid": me, "start": process_start_time(me) - 500}), encoding="utf-8")
-    assert not marker_running(marker)                                       # same PID, different process
-    marker.write_text(_json.dumps({"pid": 999999, "start": 1.0}), encoding="utf-8")
-    assert not marker_running(marker)                                       # dead process
-    marker.write_text(_json.dumps({"pid": me, "start": process_start_time(me)}), encoding="utf-8")
-    old = _time.time() - 4 * 3600
-    os.utime(marker, (old, old))
-    assert not marker_running(marker)                                       # leftover from hours ago
-    marker.write_text(str(me), encoding="utf-8")
-    assert marker_running(marker)                                           # old PID-only format still read
-
-
 def test_folder_picker_results(monkeypatch) -> None:
     import subprocess
 
@@ -323,27 +168,6 @@ def test_folder_picker_results(monkeypatch) -> None:
     monkeypatch.setattr(fp.subprocess, "run", fake("", 1, "TclError: no display"))
     with pytest.raises(fp.FolderPickerError):
         fp.pick_folder()
-
-
-def test_settings_browse_adds_root(env, tmp_path) -> None:
-    picked = tmp_path / "picked_projects"
-    picked.mkdir()
-    root = str(Path(APP).parent)
-    script = "\n".join([
-        "import sys", f"sys.path.insert(0, r'{root}')",
-        "import utils.folder_picker as fp",
-        f"fp.pick_folder = lambda *a, **k: r'{picked}'",
-        "from dashboard.common import inject_css", "from dashboard import settings",
-        "inject_css()", "settings.render()"])
-    at = AppTest.from_string(script, default_timeout=60).run()
-    assert not at.exception
-    before = at.text_area(key="roots_text").value
-    at.button(key="roots_browse").click().run()
-    assert not at.exception
-    value = at.text_area(key="roots_text").value
-    assert str(picked) in value and value.startswith(before.strip())
-    # Saving is still an explicit step: config.yaml is unchanged until "Validate and save".
-    assert str(picked) not in Path(os.environ["LSS_CONFIG"]).read_text(encoding="utf-8")
 
 
 def test_selected_row_accepts_row_checkbox_or_cell_click() -> None:
@@ -388,127 +212,3 @@ def test_overview_counts_only_monitored_repositories(tmp_path) -> None:  # noqa:
     assert len(an.findings_frame(conn, ids["Gone"])) == 1  # history kept and still reachable by id
 
 
-def test_reports_page_generates_audit_report(env) -> None:
-    populate(env)
-    at = page_app("reports").run()
-    assert not at.exception
-    assert not [b for b in at.button if b.key == "audit_generate"]  # combined scope -> asks for one repository
-    at.selectbox[0].set_value("Phoenix").run()
-    gen = [b for b in at.button if b.key == "audit_generate"]
-    assert gen
-    gen[0].click().run()
-    assert not at.exception
-    saved = list((env.reports_dir / "exports").glob("*_Phoenix_security_audit.html"))
-    assert len(saved) == 1
-    doc = saved[0].read_text(encoding="utf-8")
-    assert "Security Audit Report" in doc and "5. Detailed vulnerability findings" in doc
-
-
-def test_empty_vulnerabilities_page_explains_unpinned_requirements(env) -> None:
-    conn = init_db(env.db_path)
-    repo_dir = Path(env.repository_roots[0]) / "Loose"
-    repo_dir.mkdir(exist_ok=True)
-    (repo_dir / "requirements.txt").write_text("numpy\npandas\n", encoding="utf-8")
-    dao.sync_discovered(conn, [DiscoveredRepo("Loose", str(repo_dir), env.repository_roots[0])], env.repository_roots)
-    rid = dao.list_repositories(conn)[0]["id"]
-    run = dao.create_scan_run(conn, rid, "trivy", "fs", ".", "b", os.getpid())
-    dao.finish_scan_run(conn, run, status="COMPLETED", finished_at="2026-11-16T01:00:00+00:00", findings_count=0)
-    conn.close()
-    at = page_app("vulnerabilities").run()
-    text = " ".join(m.value for m in at.markdown)
-    assert "No libraries could be checked" in text and "No known vulnerabilities" not in text
-    at = page_app("misconfigurations").run()
-    text = " ".join(m.value for m in at.markdown)
-    assert "Nothing to check" in text
-
-
-def test_overview_has_plain_project_table_not_charts(env) -> None:
-    populate(env)
-    at = page_app("overview").run()
-    assert not at.exception
-    text = " ".join(m.value for m in at.markdown)
-    assert "Problems by project" in text and "Vulnerable libraries" in text
-    assert "Severity breakdown" not in text
-
-
-def test_findings_repository_filter_lists_clean_repositories(env) -> None:
-    populate(env)
-    conn = init_db(env.db_path)
-    clean_dir = Path(env.repository_roots[0]) / "CleanOne"
-    clean_dir.mkdir(exist_ok=True)
-    dao.sync_discovered(conn, [DiscoveredRepo("Phoenix", str(Path(env.repository_roots[0]) / "Phoenix"),
-                                              env.repository_roots[0]),
-                               DiscoveredRepo("CleanOne", str(clean_dir), env.repository_roots[0])],
-                        env.repository_roots)
-    conn.close()
-    at = page_app("findings").run()
-    box = at.multiselect(key="all_repo")
-    assert set(box.options) >= {"Phoenix", "CleanOne (none found)"}
-    box.select("CleanOne").run()
-    text = " ".join(m.value for m in at.markdown)
-    assert "No findings in CleanOne" in text
-
-
-def test_misconfigurations_hidden_until_there_is_something_to_check(env) -> None:
-    from dashboard.common import coverage, misconfig_relevant
-
-    conn = init_db(env.db_path)
-    repo_dir = Path(env.repository_roots[0]) / "PlainApp"
-    repo_dir.mkdir(exist_ok=True)
-    (repo_dir / "app.py").write_text("print('hi')\n", encoding="utf-8")
-    dao.sync_discovered(conn, [DiscoveredRepo("PlainApp", str(repo_dir), env.repository_roots[0])],
-                        env.repository_roots)
-    coverage.clear()
-    assert not misconfig_relevant(env, conn)
-    conn.close()
-    at = page_app("overview").run()
-    assert not at.exception
-    text = " ".join(m.value for m in at.markdown)
-    assert "Problems by project" in text and "Unsafe settings" not in text and "Misconfigs" not in text
-    at = AppTest.from_file(APP, default_timeout=60).run()
-    assert not at.exception
-
-    (repo_dir / "Dockerfile").write_text("FROM python:3.12\n", encoding="utf-8")
-    coverage.clear()
-    conn = init_db(env.db_path)
-    assert misconfig_relevant(env, conn)
-    conn.close()
-
-
-def test_misconfigurations_shown_when_findings_exist(env) -> None:
-    from dashboard.common import coverage, misconfig_relevant
-
-    populate(env)  # the Trivy fixture contains one misconfiguration
-    coverage.clear()
-    conn = init_db(env.db_path)
-    assert misconfig_relevant(env, conn)
-    conn.close()
-    text = " ".join(m.value for m in page_app("overview").run().markdown)
-    assert "Unsafe settings" in text
-
-
-def test_code_issues_page_and_overview_show_sast_findings(env) -> None:
-    from engine.sast_scanner import CATEGORY, parse_bandit_data
-
-    conn = init_db(env.db_path)
-    repo_dir = Path(env.repository_roots[0]) / "Coder"
-    (repo_dir / "app").mkdir(parents=True, exist_ok=True)
-    (repo_dir / "app" / "db.py").write_text("q = 'x%s' % y\n", encoding="utf-8")
-    dao.sync_discovered(conn, [DiscoveredRepo("Coder", str(repo_dir), env.repository_roots[0])], env.repository_roots)
-    rid = dao.list_repositories(conn)[0]["id"]
-    cov = Coverage("bandit", "python", ".", frozenset({CATEGORY}), frozenset(SEVERITIES))
-    run = dao.create_scan_run(conn, rid, "bandit", "python", ".", "b", os.getpid())
-    findings, _ = parse_bandit_data({"errors": [], "results": [{
-        "test_id": "B608", "test_name": "hardcoded_sql_expressions", "filename": "./app/db.py", "line_number": 12,
-        "issue_severity": "MEDIUM", "issue_confidence": "MEDIUM", "issue_text": "Possible SQL injection vector.",
-        "issue_cwe": {"id": 89}, "more_info": "https://bandit.readthedocs.io/", "code": "12 q = 'x%s' % y\n"}]})
-    apply_scan_results(conn, rid, run, cov, findings)
-    dao.finish_scan_run(conn, run, status="COMPLETED_WITH_FINDINGS", finished_at="2026-11-18T01:00:00+00:00",
-                        findings_count=1, coverage=cov.key())
-    conn.close()
-    at = page_app("code_issues").run()
-    assert not at.exception
-    tables = " ".join(d.value.to_string() for d in at.dataframe)
-    assert "B608" in tables and "app/db.py:12" in tables
-    text = " ".join(m.value for m in page_app("overview").run().markdown)
-    assert "Code issues" in text

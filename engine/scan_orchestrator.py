@@ -12,7 +12,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from database import repositories as dao
 from database.db import connect, get_setting, init_db, set_setting, utcnow
@@ -22,7 +22,7 @@ from engine.dast_scanner import DastScanner
 from engine.gitleaks_scanner import GitleaksScanner
 from engine import installed_scanner
 from engine.locks import JobLock, JobLockError
-from engine.repository_discovery import DiscoveryResult, discover_repositories
+from engine.repository_discovery import DiscoveredRepo, DiscoveryResult, discover_repositories
 from engine.runner import CANCEL_EVENT, ScanExecution, cancel_all
 from engine.sast_scanner import BanditScanner, exclude_patterns
 from engine.scanner_health import ToolStatus, check_bandit, check_gitleaks, check_trivy
@@ -103,6 +103,19 @@ class BatchSummary:
         }
 
 
+@dataclass
+class FolderScan:
+    """Result of scanning one pasted folder: every project found in it, scanned in one batch."""
+    folder: str
+    projects: list[dict[str, Any]]
+    batch: BatchSummary
+    errors: list[str] = field(default_factory=list)
+
+
+class FolderScanError(ValueError):
+    """The pasted folder cannot be scanned (missing, not a folder, or a scan is already running)."""
+
+
 def _safe_name(name: str) -> str:
     return re.sub(r"[^A-Za-z0-9._-]+", "_", name)[:60] or "repo"
 
@@ -176,7 +189,12 @@ class ScanOrchestrator:
                 jobs += [Job("trivy", "installed", f"{kind}:{rel}")
                          for kind, rel in installed_scanner.find_environments(Path(repo["path"]))]
         if self.cfg.gitleaks.enabled:
-            jobs += [Job("gitleaks", m) for m in self.cfg.gitleaks.modes]
+            modes = list(self.cfg.gitleaks.modes)
+            if repo.get("repo_kind") == "folder":  # not a git repository: there is no history to read
+                modes = [m for m in modes if m != "git"]
+                if "dir" not in modes:
+                    modes.append("dir")
+            jobs += [Job("gitleaks", m) for m in modes]
         if self.cfg.sast.enabled:
             jobs.append(Job("bandit", "python"))
             if self.cfg.sast.other_languages:
@@ -385,10 +403,12 @@ class ScanOrchestrator:
         return out
 
     def is_path_allowed(self, path: str) -> bool:
-        return any(is_within(path, root) for root in self.cfg.repository_roots)
+        roots = [*self.cfg.repository_roots, *getattr(self, "_extra_roots", [])]
+        return any(is_within(path, root) for root in roots)
 
     def scan_repository(self, repo: dict[str, Any], batch_id: str | None = None,
-                        offline: bool | None = None) -> list[RunSummary]:
+                        offline: bool | None = None,
+                        on_job: Callable[[Job, RunSummary | None], None] | None = None) -> list[RunSummary]:
         batch_id = batch_id or uuid.uuid4().hex[:12]
         offline = self.cfg.scan.offline if offline is None else offline
         conn = self.connect()
@@ -408,7 +428,11 @@ class ScanOrchestrator:
                     if CANCEL_EVENT.is_set():
                         summaries += self._skip_cancelled(conn, repo, batch_id, job)
                         continue
+                    if on_job:
+                        on_job(job, None)  # starting
                     summaries.append(self._execute_job(conn, repo, job, repo_path, batch_id, offline))
+                    if on_job:
+                        on_job(job, summaries[-1])  # finished
             finally:
                 dao.release_repo_lock(conn, repo["id"], pid)
         finally:
@@ -516,6 +540,67 @@ class ScanOrchestrator:
             batch = self.scan_many(repos, offline)
             batch.errors = errors + batch.errors
             return batch
+        finally:
+            lock.release()
+
+    # ------------------------------------------------------------------ pasted folder
+    def find_projects(self, folder: str | Path) -> list[DiscoveredRepo]:
+        """Projects inside a pasted folder: every git repository in it, or the folder itself when it has none."""
+        path = Path(str(folder).strip().strip('"')).expanduser()
+        if not path.is_dir():
+            raise FolderScanError(f"Folder not found: {path}")
+        path = path.resolve()
+        result = discover_repositories(
+            [str(path)], self.cfg.excluded_dirs, max_depth=self.cfg.max_depth,
+            follow_symlinks=self.cfg.follow_symlinks, protected_dirs=self.cfg.app_dirs(),
+            capture_metadata=self.cfg.capture_git_metadata,
+        )
+        if result.repositories:
+            return result.repositories
+        if any(is_within(path, p) for p in self.cfg.app_dirs()):
+            raise FolderScanError("That folder belongs to the scanner itself. Choose a project folder.")
+        return [DiscoveredRepo(path.name or str(path), str(path), str(path), "folder")]
+
+    def scan_folder(self, folder: str | Path, offline: bool | None = None,
+                    on_project: Callable[[int, int, dict[str, Any]], None] | None = None,
+                    on_job: Callable[[Job, RunSummary | None], None] | None = None) -> FolderScan:
+        """Scan everything in one pasted folder (each project in turn) and return the projects scanned.
+
+        Projects are added to the database without touching other projects. Runs in the calling thread so a
+        user interface can show progress through the callbacks.
+        """
+        lock = JobLock(self.cfg.data_dir / "scan_all.lock")
+        try:
+            lock.acquire()
+        except JobLockError as exc:
+            raise FolderScanError(f"Another scan is running. Try again when it has finished. ({exc})") from exc
+        try:
+            found = self.find_projects(folder)
+            root = found[0].root
+            conn = self.connect()
+            try:
+                dao.sync_discovered(conn, found, [])  # no roots given: other projects stay as they are
+                projects = []
+                for repo in found:
+                    row = conn.execute("SELECT * FROM repositories WHERE path_key=?",
+                                       (normalize_key(repo.path),)).fetchone()
+                    if row:
+                        projects.append(dict(row))
+            finally:
+                conn.close()
+            self._extra_roots = [root]
+            batch = BatchSummary(uuid.uuid4().hex[:12], utcnow(), repositories=len(projects))
+            CANCEL_EVENT.clear()
+            try:
+                for i, repo in enumerate(projects, 1):
+                    if on_project:
+                        on_project(i, len(projects), repo)
+                    batch.runs += self.scan_repository(repo, batch.batch_id, offline, on_job)
+            finally:
+                self._extra_roots = []
+            batch.finished_at = utcnow()
+            self._post_batch(batch)
+            return FolderScan(root, projects, batch)
         finally:
             lock.release()
 

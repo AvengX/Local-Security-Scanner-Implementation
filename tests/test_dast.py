@@ -120,34 +120,3 @@ def test_orchestrator_runs_dast_resolves_fixes_and_keeps_issues_when_app_is_down
     conn.close()
 
 
-def test_web_issues_page_explains_missing_addresses_and_shows_findings(cfg, tmp_path: Path, monkeypatch,
-                                                                       vuln_app: LabWebApp) -> None:
-    from streamlit.testing.v1 import AppTest
-
-    root = str(Path(__file__).resolve().parent.parent).replace("\\", "/")
-    script = f"import sys\nsys.path.insert(0, r'{root}')\nfrom dashboard.common import inject_css\n" \
-             "from dashboard import web_issues\ninject_css()\nweb_issues.render()\n"
-
-    def run(config: AppConfig):  # noqa: ANN202
-        p = tmp_path / "config.yaml"
-        p.write_text(yaml.safe_dump(config.model_dump()), encoding="utf-8")
-        monkeypatch.setenv("LSS_CONFIG", str(p))
-        return AppTest.from_string(script, default_timeout=60).run()
-
-    cfg.ensure_dirs()
-    repo = Path(cfg.repository_roots[0]) / "Shop"
-    make_repo(repo, {"app.py": "x = 1\n"})
-    ScanOrchestrator(cfg).discover()
-    at = run(cfg)
-    assert not at.exception
-    assert "No web addresses added yet" in " ".join(m.value for m in at.markdown)
-
-    cfg.trivy.enabled = cfg.gitleaks.enabled = cfg.sast.enabled = False
-    cfg.dast = cfg.dast.model_validate({"targets": [{"repository": "Shop", "url": vuln_app.url}]})
-    orch = ScanOrchestrator(cfg)
-    orch.scan_repository(dao.list_repositories(init_db(cfg.db_path))[0])
-    at = run(cfg)
-    assert not at.exception
-    tables = " ".join(d.value.to_string() for d in at.dataframe)
-    assert "DAST-XSS" in tables and "/search" in tables
-    assert ENV_SECRET not in tables
