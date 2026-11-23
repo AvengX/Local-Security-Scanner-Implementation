@@ -173,3 +173,23 @@ def test_preview_renders_every_page_and_caches(env) -> None:  # noqa: ANN001
     assert (pages_dir(f.pdf_path) / "done.txt").read_text(encoding="ascii").strip() == str(len(pages))
     first = pages[0].stat().st_mtime_ns
     assert page_images(f.pdf_path) == pages and pages[0].stat().st_mtime_ns == first  # served from the cache
+
+
+def test_logo_header_repeats_and_is_embedded(env, tmp_path: Path) -> None:  # noqa: ANN001
+    from utils.config import ReportConfig
+
+    logo = tmp_path / "logo.svg"
+    logo.write_text("<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 2'><rect width='10' height='2'/></svg>",
+                    encoding="utf-8")
+    populate(env)
+    conn = init_db(env.db_path)
+    rid = dao.list_repositories(conn)[0]["id"]
+    plain = vr.render_vapt_html(vr.build_vapt(conn, env, rid))
+    assert "class='brand'" not in plain  # no logo configured: no header
+    env.report = ReportConfig(logo_path=str(logo), organisation="Example Ltd")
+    page = vr.render_vapt_html(vr.build_vapt(conn, env, rid))
+    assert "<thead><tr><td><div class='brand'>" in page  # repeated on every printed page
+    assert "data:image/svg+xml;base64," in page and str(logo) not in page  # embedded, no file path leaks
+    assert "Example Ltd" in page
+    with pytest.raises(ValueError, match="svg, .png or .jpg"):
+        ReportConfig(logo_path="logo.exe")

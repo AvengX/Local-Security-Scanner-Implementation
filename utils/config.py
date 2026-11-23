@@ -314,6 +314,28 @@ class AlertsConfig(_Strict):
         return value
 
 
+class ReportConfig(_Strict):
+    """Branding of the VAPT report (PDF). Keep company logos in git-ignored folders such as the data folder."""
+
+    logo_path: str = Field("", description="Logo shown at the top of every report page (.svg, .png or .jpg). "
+                                           "Relative paths are relative to the scanner folder.")
+    organisation: str = Field("", max_length=80, description="Name shown next to the logo (optional)")
+
+    @field_validator("logo_path")
+    @classmethod
+    def _logo(cls, value: str) -> str:
+        value = value.strip().strip('"')
+        if value and not re.search(r"(?i)\.(svg|png|jpe?g)$", value):
+            raise ValueError("The report logo must be an .svg, .png or .jpg file")
+        return value
+
+    def logo_file(self) -> "Path | None":
+        if not self.logo_path:
+            return None
+        p = resolve_app_path(self.logo_path)
+        return p if p.is_file() else None
+
+
 class DashboardConfig(_Strict):
     host: str = "127.0.0.1"
     port: int = Field(8501, ge=1024, le=65535)
@@ -348,6 +370,7 @@ class AppConfig(_Strict):
     sast: SastConfig = Field(default_factory=SastConfig)
     dast: DastConfig = Field(default_factory=DastConfig)
     alerts: AlertsConfig = Field(default_factory=AlertsConfig)
+    report: ReportConfig = Field(default_factory=ReportConfig)
     dashboard: DashboardConfig = Field(default_factory=DashboardConfig)
     schedule: ScheduleConfig = Field(default_factory=ScheduleConfig)
 

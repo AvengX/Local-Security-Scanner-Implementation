@@ -72,6 +72,10 @@ dast:                         # web scan (dynamic testing) of your own RUNNING a
   max_requests: 400           # requests sent per address (GET only; forms that change data are never submitted)
   request_timeout: 10         # seconds to wait for one response
 
+report:                       # branding of the VAPT report (PDF)
+  logo_path: ''               # e.g. data/branding/logo.svg (.svg/.png/.jpg) - shown at the top of every page
+  organisation: ''            # optional name shown next to the logo
+
 dashboard:
   host: 127.0.0.1             # loopback only; other values are rejected
   port: 8501

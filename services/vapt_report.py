@@ -10,6 +10,7 @@ Only safe data is used: secret values are never stored, so they can never appear
 
 from __future__ import annotations
 
+import base64
 import html
 import json
 import os
@@ -347,7 +348,8 @@ def _evidence(i: Issue) -> str:
             line += f" — {_e(_first_sentence(_s(meta['evidence']), 220))}"
         elif r.get("title") and i.category in ("CODE", "MISCONFIGURATION"):
             line += f" — {_e(_first_sentence(_s(r.get('title')), 160))}"
-        items.append(f"<li>{line}</li>")
+        if f"<li>{line}</li>" not in items:  # two tools can report the same place
+            items.append(f"<li>{line}</li>")
     more = f"<li class='muted'>…and {len(i.rows) - 8} more.</li>" if len(i.rows) > 8 else ""
     return f"<ul class='ev'>{''.join(items)}{more}</ul>"
 
@@ -629,6 +631,12 @@ code { font-family: 'Cascadia Code', Consolas, monospace; font-size: 9pt; backgr
 .road td:first-child { white-space: nowrap; }
 .footer { margin-top: 30px; color:#888; font-size: 8.5pt; border-top:1px solid #EEE; padding-top: 8px; }
 ul.plain { margin: 8px 0 0 18px; padding:0; } ul.plain li { margin: 5px 0; }
+.frame { width: 100%; border-collapse: collapse; }
+.frame > thead > tr > td, .frame > tbody > tr > td { padding: 0; }
+.brand { display: flex; align-items: center; justify-content: space-between; gap: 16px;
+         border-bottom: 1px solid #E2E2E2; padding: 0 0 8px; margin: 0 0 18px; }
+.brand img { height: 26px; width: auto; display: block; }
+.brand .org { color: #555; font-size: 9pt; text-align: right; line-height: 1.35; }
 @media print { .page { padding: 0; max-width: none; } a { color: inherit; } }
 """
 
@@ -692,8 +700,10 @@ def render_vapt_html(d: dict[str, Any]) -> str:
 
     nt = "".join(f"<li>{_e(x)}</li>" for x in _not_tested(d))
     gen = _when(d["generated"])
+    brand_open, brand_close = _brand(d["cfg"], name)
     return f"""<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">
 <title>{_e(name)} — Security Assessment (VAPT) — {_e(date)}</title><style>{CSS}</style></head><body><div class="page">
+{brand_open}
 <h1>{_e(name)} — Security Assessment (VAPT) — {_e(date)}</h1>
 <p class="lead">{lead}</p>
 <div class="toc"><div class="h">On this page</div>{toc}</div>
@@ -717,7 +727,35 @@ risk until a follow-up review covers them.</div>
 <ul class="plain">{nt}</ul>
 <div class="footer">Generated {_e(gen)} by Local Security Scanner {__version__}. Automated assessment: results should
 be confirmed by the team that owns the code. Secret values are never included.</div>
-</div></body></html>"""
+{brand_close}</div></body></html>"""
+
+
+def _logo_data_uri(path: Path) -> str | None:
+    """The logo embedded in the report itself (no external file or network request when printing)."""
+    mime = {".svg": "image/svg+xml", ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg"}.get(
+        path.suffix.lower())
+    try:
+        data = path.read_bytes()
+    except OSError:
+        return None
+    if not mime or not data or len(data) > 2_000_000:
+        return None
+    return f"data:{mime};base64,{base64.b64encode(data).decode('ascii')}"
+
+
+def _brand(cfg: AppConfig, project: str) -> tuple[str, str]:
+    """Header repeated at the top of every printed page (a table header row repeats on each page in Chromium)."""
+    rc = getattr(cfg, "report", None)
+    logo = rc.logo_file() if rc else None
+    uri = _logo_data_uri(logo) if logo else None
+    org = rc.organisation.strip() if rc else ""
+    if not uri and not org:
+        return "", ""
+    left = (f"<img src='{uri}' alt='{_e(org or 'Logo')}'>" if uri else f"<b>{_e(org)}</b>")
+    right = (f"{_e(org) + '<br>' if uri and org else ''}Security Assessment (VAPT) · {_e(project)}")
+    head = (f"<table class='frame'><thead><tr><td><div class='brand'>{left}<div class='org'>{right}</div></div>"
+            "</td></tr></thead><tbody><tr><td>")
+    return head, "</td></tr></tbody></table>"
 
 
 def _cvss_text(i: Issue) -> str:
