@@ -11,6 +11,12 @@
 - One report per project when the folder holds several projects; a folder without Git is scanned as one project.
 - CVSS 3.1 scores and CWE ids are now kept from Trivy results.
 - CLI: `run_scan.py vapt <folder>`.
+- **Live websites:** paste a website address (`https://…`) instead of a folder to test a site you are authorised to
+  test. Its exact host name must be listed in `dast.allowed_hosts` (empty by default, so nothing outside this
+  computer is contacted unless you add it). Outside sites get verified TLS, a pause between requests, GET-only probes
+  and the same limits; no start command. Each website gets its own black-box VAPT report.
+  CLI: `run_scan.py vapt https://site/ [https://site:3001/ …]`.
+- Fixed report file names for projects whose names contain dots.
 - Removed the multi-page dashboard (Overview, Findings, Trends, Settings and the rest). The engine, database and CLI
   commands are unchanged; settings are edited in `config.yaml`.
 

@@ -21,9 +21,11 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 from services.explain import LOCAL_SECRET_FILE, RULE_TOPIC, SECRET_KINDS, TOPICS, _topic_for, explain, risk_level
 from utils.config import AppConfig
+from utils.validators import is_loopback_host
 from utils.version import __version__
 
 SEVS = ("CRITICAL", "HIGH", "MEDIUM", "LOW", "UNKNOWN")
@@ -437,8 +439,35 @@ def _ver(rs: list[dict]) -> str:
     return f" {v.split()[0]}" if v else ""
 
 
+def _web_line(d: dict[str, Any], web: list[dict]) -> str:
+    tgts = ", ".join(_e(r["scan_target"]) for r in web)
+    login = any(d["cfg"].dast.login_for(d["repo"]["name"], r["scan_target"]) for r in web)
+    where = "on this computer" if all(is_loopback_host(urlsplit(r["scan_target"]).hostname) for r in web) else \
+        "(authorised outside website)"
+    return (f"Safe GET-only probes of {tgts} {where}" + (" (signed in with a test account)" if login else "") +
+            ": security headers, cookies, exposed files, debug pages, error leaks, CORS, XSS, SQL errors, "
+            "open redirect, path traversal" + _status_note(web))
+
+
+SCORING = ("Severity from each tool. CVSS 3.1 base score where the advisory publishes one (— otherwise). "
+           "Confidence: Confirmed (exact version match, live probe or Git history), Likely (pattern found in code), "
+           "Needs verification (a person should look).")
+
+
 def _scope(d: dict[str, Any]) -> list[tuple[str, str]]:
     repo, runs, comp, cfg = d["repo"], d["runs"], d["components"], d["cfg"]
+    if repo.get("repo_kind") == "website":
+        web = _ran(runs, "dast")
+        return [
+            ("Target", ", ".join(_e(r["scan_target"]) for r in web) or _e(repo["name"])),
+            ("Type", "Live website only (black-box). No source code was available or reviewed."),
+            ("Dynamic testing", _web_line(d, web) if web else "<span class='muted'>Not run.</span>"),
+            ("Rules", "Only the listed website was contacted, with GET requests (no forms that change data), "
+                      "verified TLS, a pause between requests and fixed request / page / time limits. Response "
+                      "bodies are not stored."),
+            ("Scoring", SCORING),
+            ("Scan time", f"{_when(d['started'])} – {_when(d['finished'])}"),
+        ]
     target = _e(repo["path"]) + f" ({comp['files']:,} files"
     if repo.get("current_branch"):
         target += f"; Git branch {_e(repo['current_branch'])}"
@@ -467,22 +496,15 @@ def _scope(d: dict[str, Any]) -> list[tuple[str, str]]:
     conf = "Trivy config checks: Dockerfile, Compose, Kubernetes, Helm, Terraform" + _status_note(cf)
     web = _ran(runs, "dast")
     if web:
-        tgts = ", ".join(_e(r["scan_target"]) for r in web)
-        login = any(cfg.dast.login_for(repo["name"], r["scan_target"]) for r in web)
-        dyn = (f"Safe GET-only probes of {tgts} on this computer" + (" (signed in with a test account)"
-                                                                       if login else "") +
-               ": security headers, cookies, exposed files, debug pages, error leaks, CORS, XSS, SQL errors, "
-               "open redirect, path traversal" + _status_note(web))
+        dyn = _web_line(d, web)
     else:
         dyn = "<span class='muted'>Not run - no local web address is configured for this project.</span>"
     return [
         ("Target", target), ("Components", "; ".join(parts)), ("Dependency scan", dep), ("Secret scan", sec),
-        ("Static code review", code), ("Configuration review", conf), ("Dynamic (localhost only)", dyn),
-        ("Rules", "Read-only: no file in the project was changed. Web probes go only to this computer. Nothing "
+        ("Static code review", code), ("Configuration review", conf), ("Dynamic (live web)", dyn),
+        ("Rules", "Read-only: no file in the project was changed. Web probes go only to the addresses listed above. Nothing "
                   "is uploaded. Secrets are never stored or shown - only where they are."),
-        ("Scoring", "Severity from each tool. CVSS 3.1 base score where the advisory publishes one (— otherwise). "
-                    "Confidence: Confirmed (exact version match, live probe or Git history), Likely (pattern found "
-                    "in code), Needs verification (a person should look)."),
+        ("Scoring", SCORING),
         ("Scan time", f"{_when(d['started'])} – {_when(d['finished'])}"),
     ]
 
@@ -558,6 +580,9 @@ def _not_tested(d: dict[str, Any]) -> list[str]:
             out.append(f"{names.get(r['scanner'], r['scanner'])} ({r['scan_type']}) did not finish: "
                        f"{_first_sentence(_s(r.get('error_message')) or r['status'], 200)}")
     web = _ran(runs, "dast")
+    if d["repo"].get("repo_kind") == "website":
+        out.append("Source code, dependencies and secrets in code: this was a website-only test, so the code "
+                   "behind it was not reviewed.")
     if not web:
         out.append("The running web application (pages, forms, APIs): no local web address is configured for this "
                    "project, so no live probes were sent.")
@@ -646,10 +671,16 @@ def render_vapt_html(d: dict[str, Any]) -> str:
     date = datetime.fromisoformat(d["generated"]).astimezone().strftime("%d %b %Y").lstrip("0")
     name = repo["name"]
     covered = ["dependencies", "secrets", "source code", "deployment configuration"]
-    if _ran(d["runs"], "dast"):
-        covered.append("the running web app on localhost")
+    web = _ran(d["runs"], "dast")
+    if web:
+        local = all(is_loopback_host(urlsplit(r["scan_target"]).hostname) for r in web)
+        covered.append("the running web app on localhost" if local else "the live website")
     lead = (f"Automated read-only review of {_e(name)}: {', '.join(covered[:-1])} and {covered[-1]}. "
             "No code or configuration was changed.")
+    if d["repo"].get("repo_kind") == "website":
+        lead = (f"Automated black-box test of the live website {_e(name)}: security headers, cookies, exposed "
+                "files, error pages and safe injection probes, using GET requests only. Nothing on the site was "
+                "changed.")
     sections = ["Executive summary", "Scope & methodology", "Findings table", "Finding details", "What's done well",
                 "Remediation roadmap", "Not tested in this pass"]
     toc = "".join(f"<a href='#s{n}'>{s}</a>" for n, s in enumerate(sections))
@@ -809,7 +840,7 @@ def generate_vapt(conn: sqlite3.Connection, cfg: AppConfig, repository_id: int, 
     d = build_vapt(conn, cfg, repository_id)
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     base = reports_folder(cfg) / f"{_safe(d['repo']['name'])}_VAPT_{stamp}"
-    html_path = base.with_suffix(".html")
+    html_path = base.parent / f"{base.name}.html"  # not with_suffix: host names such as a.b.com contain dots
     html_path.write_text(render_vapt_html(d), encoding="utf-8")
     out = VaptFile(d["repo"]["name"], html_path, None, {s: d["counts"].get(s, 0) for s in SEVS}, len(d["issues"]))
     if pdf:

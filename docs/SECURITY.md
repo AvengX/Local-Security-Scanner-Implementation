@@ -44,7 +44,9 @@ weaken Git's ownership checks itself.
 
 ## Raw report sensitivity
 * Gitleaks reports are written with `--redact` (secret values replaced by `REDACTED`).
-* The web scan (DAST) contacts loopback addresses only (validated in config and before every request, no proxy,
+* The web scan (DAST) contacts loopback addresses, plus outside hosts only when their exact name is listed in
+  `dast.allowed_hosts` (empty by default; for sites you are authorised to test; verified TLS and a pause between
+  requests; no start command). Hosts are checked in config and before every request (no proxy,
   no off-site redirects), sends GET requests only (plus one TRACE probe), never submits POST forms, skips links
   such as logout/delete, and never stores response bodies — an exposed `.env` is recorded by path and size only.
 * Web-scan login (optional): only the NAME of an environment variable is stored; the password is read at scan time,

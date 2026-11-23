@@ -179,6 +179,9 @@ class ScanOrchestrator:
 
     # ------------------------------------------------------------------ planning
     def plan_jobs(self, repo: dict[str, Any]) -> list[Job]:
+        if repo.get("repo_kind") == "website":  # a website on its own: only the live web scan applies
+            urls = getattr(self, "_website_urls", {}).get(repo["name"]) or self.cfg.dast.targets_for(repo["name"])
+            return [Job("dast", "web", u) for u in urls]
         jobs: list[Job] = []
         if self.cfg.trivy.enabled:
             jobs += [Job("trivy", t) for t in self.cfg.trivy.scan_types]
@@ -569,40 +572,94 @@ class ScanOrchestrator:
         Projects are added to the database without touching other projects. Runs in the calling thread so a
         user interface can show progress through the callbacks.
         """
+        lock = self._folder_lock()
+        try:
+            found = self.find_projects(folder)
+            return self._scan_found(found, found[0].root, offline, on_project, on_job)
+        finally:
+            lock.release()
+
+    def _folder_lock(self) -> JobLock:
         lock = JobLock(self.cfg.data_dir / "scan_all.lock")
         try:
             lock.acquire()
         except JobLockError as exc:
             raise FolderScanError(f"Another scan is running. Try again when it has finished. ({exc})") from exc
+        return lock
+
+    def website_projects(self, urls: list[str]) -> dict[str, list[str]]:
+        """Web addresses grouped by host (one report per website); refuses hosts that are not allowed."""
+        from urllib.parse import urlsplit
+
+        from utils.validators import validate_dast_url
+
+        out: dict[str, list[str]] = {}
+        for raw in urls:
+            raw = raw.strip().strip('"')
+            if not raw:
+                continue
+            try:
+                url = validate_dast_url(raw)
+            except ValueError as exc:
+                raise FolderScanError(str(exc)) from exc
+            same_host = out.setdefault(urlsplit(url).hostname or "website", [])
+            if url not in same_host:
+                same_host.append(url)
+        if not out:
+            raise FolderScanError("Enter a website address such as https://app.example.com/")
+        return out
+
+    def scan_website(self, urls: list[str], offline: bool | None = None,
+                     on_project: Callable[[int, int, dict[str, Any]], None] | None = None,
+                     on_job: Callable[[Job, RunSummary | None], None] | None = None) -> FolderScan:
+        """Live web scan of one or more addresses (this computer, or hosts listed in dast.allowed_hosts).
+
+        Each host becomes a "website" project (an empty working folder under data/websites), so it gets its own
+        history and VAPT report like a code project."""
+        groups = self.website_projects(urls)
+        lock = self._folder_lock()
         try:
-            found = self.find_projects(folder)
-            root = found[0].root
-            conn = self.connect()
+            root = self.cfg.data_dir / "websites"
+            found = []
+            for host in groups:
+                folder = root / _safe_name(host)
+                folder.mkdir(parents=True, exist_ok=True)
+                found.append(DiscoveredRepo(host, str(folder), str(root), "website"))
+            self._website_urls = groups
             try:
-                dao.sync_discovered(conn, found, [])  # no roots given: other projects stay as they are
-                projects = []
-                for repo in found:
-                    row = conn.execute("SELECT * FROM repositories WHERE path_key=?",
-                                       (normalize_key(repo.path),)).fetchone()
-                    if row:
-                        projects.append(dict(row))
+                return self._scan_found(found, str(root), offline, on_project, on_job)
             finally:
-                conn.close()
-            self._extra_roots = [root]
-            batch = BatchSummary(uuid.uuid4().hex[:12], utcnow(), repositories=len(projects))
-            CANCEL_EVENT.clear()
-            try:
-                for i, repo in enumerate(projects, 1):
-                    if on_project:
-                        on_project(i, len(projects), repo)
-                    batch.runs += self.scan_repository(repo, batch.batch_id, offline, on_job)
-            finally:
-                self._extra_roots = []
-            batch.finished_at = utcnow()
-            self._post_batch(batch)
-            return FolderScan(root, projects, batch)
+                self._website_urls = {}
         finally:
             lock.release()
+
+    def _scan_found(self, found: list[DiscoveredRepo], root: str, offline: bool | None,
+                    on_project: Callable[[int, int, dict[str, Any]], None] | None,
+                    on_job: Callable[[Job, RunSummary | None], None] | None) -> FolderScan:
+        conn = self.connect()
+        try:
+            dao.sync_discovered(conn, found, [])  # no roots given: other projects stay as they are
+            projects = []
+            for repo in found:
+                row = conn.execute("SELECT * FROM repositories WHERE path_key=?",
+                                   (normalize_key(repo.path),)).fetchone()
+                if row:
+                    projects.append(dict(row))
+        finally:
+            conn.close()
+        self._extra_roots = [root]
+        batch = BatchSummary(uuid.uuid4().hex[:12], utcnow(), repositories=len(projects))
+        CANCEL_EVENT.clear()
+        try:
+            for i, repo in enumerate(projects, 1):
+                if on_project:
+                    on_project(i, len(projects), repo)
+                batch.runs += self.scan_repository(repo, batch.batch_id, offline, on_job)
+        finally:
+            self._extra_roots = []
+        batch.finished_at = utcnow()
+        self._post_batch(batch)
+        return FolderScan(root, projects, batch)
 
     def _post_batch(self, batch: BatchSummary) -> None:
         conn = self.connect()

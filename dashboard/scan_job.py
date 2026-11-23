@@ -5,6 +5,7 @@ The page only reads the shared progress record and refreshes itself while the sc
 
 from __future__ import annotations
 
+import re
 import threading
 import time
 from dataclasses import dataclass, field
@@ -15,7 +16,7 @@ JOB_LABEL = {
     ("trivy", "installed"): "Installed library versions", ("trivy", "image"): "Container image",
     ("trivy", "sbom"): "Software bill of materials", ("gitleaks", "dir"): "Passwords and keys in files",
     ("gitleaks", "git"): "Passwords and keys in Git history", ("bandit", "python"): "Python code",
-    ("codescan", "multi"): "Code in other languages", ("dast", "web"): "Running web app",
+    ("codescan", "multi"): "Code in other languages", ("dast", "web"): "Live website",
 }
 
 
@@ -92,7 +93,12 @@ def _run(job: ScanJob) -> None:
             text = f"{summary.findings} finding(s)" if ok else f"did not finish: {summary.error or summary.status}"
             job.add(f"- {label}: {':green[done]' if ok else ':red[problem]'} · {text}", replace_last=True)
 
-        scan = orch.scan_folder(job.folder, on_project=on_project, on_job=on_job)
+        urls = [u for u in re.split(r"[\s,]+", job.folder) if u]
+        if urls and all(u.lower().startswith(("http://", "https://")) for u in urls):
+            job.label = "Testing the website…"
+            scan = orch.scan_website(urls, on_project=on_project, on_job=on_job)
+        else:
+            scan = orch.scan_folder(job.folder, on_project=on_project, on_job=on_job)
         job.label = "Writing the PDF report(s)…"
         conn = init_db(cfg.db_path)
         try:

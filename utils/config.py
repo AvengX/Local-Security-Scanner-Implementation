@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 from urllib.parse import urlsplit
 
 import yaml
@@ -265,13 +265,38 @@ class DastTarget(_Strict):
 
 
 class DastConfig(_Strict):
-    """Built-in dynamic scan (DAST) of the user's own running web apps. Loopback addresses only."""
+    """Built-in dynamic scan (DAST) of the user's own running web apps.
+
+    Loopback addresses always; an outside website only when its exact host name is in ``allowed_hosts``
+    (for sites the user is authorised to test)."""
 
     enabled: bool = True
+    allowed_hosts: list[str] = Field(default_factory=list,
+                                     description="Outside websites (exact host names) you are authorised to test")
     targets: list[DastTarget] = Field(default_factory=list)
     max_pages: int = Field(30, ge=1, le=500, description="Pages followed per address")
     max_requests: int = Field(400, ge=20, le=5000, description="Requests sent per address")
     request_timeout: int = Field(10, ge=1, le=120, description="Seconds to wait for one response")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _register_hosts(cls, data: Any) -> Any:
+        # Runs before the targets are checked, so their addresses may use the hosts listed here.
+        hosts = data.get("allowed_hosts") if isinstance(data, dict) else getattr(data, "allowed_hosts", None)
+        v.set_allowed_web_hosts(list(hosts or []))
+        return data
+
+    @field_validator("allowed_hosts")
+    @classmethod
+    def _hosts(cls, value: list[str]) -> list[str]:
+        return list(dict.fromkeys(v.normalize_web_host(h) for h in value))
+
+    @model_validator(mode="after")
+    def _remote_rules(self) -> "DastConfig":
+        for t in self.targets:
+            if t.start_command and not v.is_loopback_host(urlsplit(t.url).hostname):
+                raise ValueError(f"start_command is only for apps on this computer, not {t.url}")
+        return self
 
     @field_validator("targets")
     @classmethod

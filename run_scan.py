@@ -225,7 +225,7 @@ def cmd_summary(cfg: AppConfig, args: argparse.Namespace) -> int:
 
 
 def cmd_vapt(cfg: AppConfig, args: argparse.Namespace) -> int:
-    """Scan everything in one folder and write a VAPT report (PDF) for each project found in it."""
+    """Scan everything in one folder (or live websites) and write a VAPT report (PDF) for each project."""
     from database.db import init_db
     from engine.scan_orchestrator import FolderScanError, ScanOrchestrator
     from services.vapt_report import generate_vapt
@@ -238,7 +238,13 @@ def cmd_vapt(cfg: AppConfig, args: argparse.Namespace) -> int:
             print(f"    {job.scanner} {job.scan_type}: {summary.status} ({summary.findings} findings)")
 
     try:
-        scan = ScanOrchestrator(cfg).scan_folder(args.folder, on_project=on_project, on_job=on_job)
+        orch = ScanOrchestrator(cfg)
+        if all(t.strip().lower().startswith(("http://", "https://")) for t in args.target):
+            scan = orch.scan_website(args.target, on_project=on_project, on_job=on_job)
+        elif len(args.target) == 1:
+            scan = orch.scan_folder(args.target[0], on_project=on_project, on_job=on_job)
+        else:
+            raise FolderScanError("Give one folder, or one or more website addresses")
     except FolderScanError as exc:
         print(str(exc))
         return EXIT_USAGE
@@ -470,8 +476,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--config", help="Path to config.yaml (default: project config.yaml or LSS_CONFIG)")
     sub = p.add_subparsers(dest="command", required=True)
 
-    va = sub.add_parser("vapt", help="Scan everything in a folder and write a VAPT report (PDF) per project")
-    va.add_argument("folder", help="Folder to scan (a project, or a folder containing several projects)")
+    va = sub.add_parser("vapt", help="Scan a folder (or websites) and write a VAPT report (PDF) per project")
+    va.add_argument("target", nargs="+", help="Folder to scan (a project, or a folder containing several projects), "
+                                              "or website address(es) listed in dast.allowed_hosts")
     va.add_argument("--no-pdf", action="store_true", help="Write the HTML report only")
     sub.add_parser("init", help="Create config.yaml (if missing) and initialise the database")
     sub.add_parser("discover", help="Discover Git repositories under the configured roots")

@@ -5,7 +5,9 @@ finds problems that only show up while the app runs: missing security headers, u
 debug pages, error pages that leak internals, and simple injection flaws.
 
 Safety rules (enforced here, not only in the configuration):
-* Only loopback addresses (localhost, 127.0.0.0/8, ::1) are contacted; every request re-checks the host.
+* Only loopback addresses (localhost, 127.0.0.0/8, ::1) are contacted, plus outside websites whose exact host
+  name the user listed in dast.allowed_hosts (sites they are authorised to test); every request re-checks the
+  host. Outside sites get verified TLS certificates and a short pause between requests.
 * Only GET requests (plus one TRACE probe) are sent. Forms are filled in only when they use GET; POST, PUT and
   DELETE are never sent, so stored data is not changed. The one exception is an optional, configured login:
   exactly one POST to the app's own sign-in form with a test account, whose password is read from an
@@ -40,7 +42,7 @@ from engine.finding_normalizer import Coverage, NormalizedFinding, deduplicate
 from engine.runner import CANCEL_EVENT, ScanExecution
 from utils.logger import get_logger
 from utils.security import sha256_hex
-from utils.validators import SEVERITIES, is_loopback_host
+from utils.validators import SEVERITIES, is_allowed_web_host, is_loopback_host
 
 log = get_logger(__name__)
 
@@ -244,17 +246,25 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
 
 
 class Client:
-    """Loopback-only HTTP client with a request budget, a deadline and cancellation."""
+    """HTTP client for this computer and allowed hosts, with a request budget, a deadline and cancellation."""
+
+    REMOTE_GAP = 0.15  # seconds between requests to an outside website
 
     def __init__(self, timeout: int, max_requests: int, deadline: float) -> None:
-        ctx = ssl.create_default_context()
-        # Local development servers usually use self-signed certificates; only loopback hosts are ever contacted.
-        ctx.check_hostname = False
-        ctx.verify_mode = ssl.CERT_NONE
+        local = ssl.create_default_context()
+        # Local development servers usually use self-signed certificates: not verified for loopback hosts only.
+        local.check_hostname = False
+        local.verify_mode = ssl.CERT_NONE
         self.cookies = http.cookiejar.CookieJar()  # in memory only; keeps a login session during one scan
-        self.opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirect(),
-                                                  urllib.request.HTTPSHandler(context=ctx),
-                                                  urllib.request.HTTPCookieProcessor(self.cookies))
+
+        def opener(ctx: ssl.SSLContext) -> urllib.request.OpenerDirector:
+            return urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirect(),
+                                               urllib.request.HTTPSHandler(context=ctx),
+                                               urllib.request.HTTPCookieProcessor(self.cookies))
+
+        self.opener = opener(local)
+        self.remote_opener = opener(ssl.create_default_context())  # outside sites: certificates are verified
+        self._last_remote = 0.0
         self.timeout = timeout
         self.max_requests = max_requests
         self.deadline = deadline
@@ -270,8 +280,14 @@ class Client:
         if self.count >= self.max_requests:
             raise _Stop("BUDGET", "Request limit reached")
         parts = urlsplit(url)
-        if parts.scheme not in ("http", "https") or not is_loopback_host(parts.hostname):
-            raise ValueError(f"Refusing to contact a non-local address: {parts.hostname}")
+        if parts.scheme not in ("http", "https") or not is_allowed_web_host(parts.hostname):
+            raise ValueError(f"Refusing to contact an address that is not allowed: {parts.hostname}")
+        remote = not is_loopback_host(parts.hostname)
+        if remote:  # be gentle with real servers
+            wait = self._last_remote + self.REMOTE_GAP - time.monotonic()
+            if wait > 0:
+                time.sleep(wait)
+            self._last_remote = time.monotonic()
         self.count += 1
         if method not in ("GET", "TRACE") and not (method == "POST" and (getattr(self, "_login_post", False)
                                                                             or getattr(self, "_api_post", False))):
@@ -279,7 +295,8 @@ class Client:
         req = urllib.request.Request(url, method=method, data=data,
                                      headers={"User-Agent": USER_AGENT, **(headers or {})})
         try:
-            with self.opener.open(req, timeout=self.timeout) as r:  # noqa: S310 - loopback http(s) only
+            with (self.remote_opener if remote else self.opener).open(  # noqa: S310 - allowed http(s) hosts only
+                    req, timeout=self.timeout) as r:
                 return Response(r.status, r.headers, r.read(MAX_BODY), url)
         except urllib.error.HTTPError as e:
             try:
@@ -756,8 +773,9 @@ class DastScanner:
         ex = ScanExecution(SCANNER, SCAN_TYPE, target, "PENDING", cov, tool_version=ENGINE_VERSION,
                            command=["built-in DAST", target])
         parts = urlsplit(target)
-        if not is_loopback_host(parts.hostname):
-            ex.status, ex.error_message = "FAILED", "Web scan is limited to apps on this computer"
+        if not is_allowed_web_host(parts.hostname):
+            ex.status, ex.error_message = "FAILED", ("Web scan is limited to apps on this computer and the websites "
+                                                     "listed in dast.allowed_hosts")
             return ex
         st = _State(origin=f"{parts.scheme}://{parts.netloc}", https=parts.scheme == "https", target=target)
         t0 = time.monotonic()

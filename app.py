@@ -119,7 +119,9 @@ def main() -> None:
     st.title("Security assessment (VAPT)")
     st.caption("Paste the path of a project folder. Everything in it is scanned on this computer — libraries, "
                "passwords and keys, source code, Docker / cloud settings and (if set up) the running web app — and "
-               "you get a PDF report. Nothing is changed or uploaded.")
+               "you get a PDF report. Nothing is changed or uploaded. You can also paste a website address "
+               "(https://…) to test a live site you are authorised to test; its host must be listed under "
+               "dast.allowed_hosts in config.yaml.")
 
     if "folder" not in st.session_state:
         last = scan_job.current()
@@ -135,12 +137,13 @@ def main() -> None:
             chosen = None
         if chosen:
             st.session_state["folder"] = chosen
-    folder = c1.text_input("Project folder", key="folder", placeholder=r"for example  D:\Projects\my-app")
+    folder = c1.text_input("Project folder or website address", key="folder",
+                           placeholder=r"for example  D:\Projects\my-app   or   https://app.example.com/")
     running = scan_job.is_running()
     start = c3.button("Scan", type="primary", icon=":material/shield:", width="stretch",
                       disabled=running or not folder.strip())
     if start:
-        scan_job.start(folder.strip().strip('"'))
+        scan_job.start(folder.strip().strip('"'))  # a folder, or website address(es)
         st.rerun()
     if scan_job.is_running():
         _progress()

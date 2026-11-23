@@ -28,7 +28,9 @@ Folder you paste ──► Trivy + Gitleaks + Bandit + code scan (+ web scan) �
 The same flow from the command line: `python run_scan.py vapt "D:\Projects\my-app"`.
 
 Nothing is uploaded. Only Trivy downloads its vulnerability list from the internet, and offline mode turns that off.
-The web scan only talks to apps on this computer (localhost / 127.0.0.1 / ::1).
+The web scan only talks to apps on this computer (localhost / 127.0.0.1 / ::1), plus outside websites whose exact
+host name you add to `dast.allowed_hosts` in `config.yaml` — only for sites you are authorised to test. Paste such a
+site's address (`https://…`) in the folder box to get a black-box VAPT report for it.
 The scanner never changes your projects — the only exception is the optional secret guard, which you switch on per project and which adds one file, `.git/hooks/pre-commit` (outside your code and history).
 
 ## Tech stack

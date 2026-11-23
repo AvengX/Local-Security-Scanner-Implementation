@@ -83,8 +83,38 @@ def is_loopback_host(host: str | None) -> bool:
         return False
 
 
+_WEB_HOST = re.compile(r"^(?=.{1,253}$)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*$")
+_ALLOWED_WEB_HOSTS: frozenset[str] = frozenset()
+
+
+def normalize_web_host(name: str) -> str:
+    """One exact host name for dast.allowed_hosts: no scheme, port, path or wildcard."""
+    host = (name or "").strip().lower().rstrip(".")
+    if not _WEB_HOST.match(host):
+        raise ValueError(f"allowed_hosts entries are exact host names such as app.example.com "
+                         f"(no http://, port, path or *): {name!r}")
+    return host
+
+
+def set_allowed_web_hosts(hosts: "list[str] | tuple[str, ...]") -> None:
+    """Outside websites the web scan may contact (set from dast.allowed_hosts each time the config loads)."""
+    global _ALLOWED_WEB_HOSTS
+    _ALLOWED_WEB_HOSTS = frozenset(normalize_web_host(h) for h in hosts)
+
+
+def allowed_web_hosts() -> frozenset[str]:
+    return _ALLOWED_WEB_HOSTS
+
+
+def is_allowed_web_host(host: str | None) -> bool:
+    """This computer, or a host listed exactly in dast.allowed_hosts."""
+    if is_loopback_host(host):
+        return True
+    return bool(host) and host.lower().rstrip(".") in _ALLOWED_WEB_HOSTS
+
+
 def validate_dast_url(url: str) -> str:
-    """A web address the DAST scan may test: http(s), loopback host only, no credentials or fragment."""
+    """A web address the DAST scan may test: http(s), this computer or an allowed host, no credentials/fragment."""
     raw = (url or "").strip()
     parts = urlsplit(raw)
     if parts.scheme not in ("http", "https"):
@@ -95,8 +125,10 @@ def validate_dast_url(url: str) -> str:
         port = parts.port
     except ValueError as exc:
         raise ValueError(f"Invalid port in web scan address: {raw!r}") from exc
-    if not is_loopback_host(parts.hostname):
-        raise ValueError(f"Web scan is limited to apps on this computer (localhost, 127.0.0.1 or ::1): {raw!r}")
+    if not is_allowed_web_host(parts.hostname):
+        raise ValueError(f"Web scan is limited to apps on this computer (localhost, 127.0.0.1 or ::1) and the "
+                         f"websites listed in dast.allowed_hosts: {raw!r} - add {parts.hostname} to "
+                         f"dast.allowed_hosts in config.yaml if you are authorised to test it")
     host = parts.hostname.lower()
     if ":" in host:
         host = f"[{host}]"
