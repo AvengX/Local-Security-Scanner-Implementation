@@ -73,4 +73,4 @@ if ($LASTEXITCODE -ne 0) {
 & $venvPy (Join-Path $Root 'run_scan.py') init
 Info 'Health check'
 & $venvPy (Join-Path $Root 'run_scan.py') health
-Ok 'Installation finished. Next: set repository_roots in config.yaml (or the dashboard Settings page), then run scripts\start.ps1'
+Ok 'Installation finished. Next: run_scan.py update-databases (once, online), then scripts\start.ps1 and open http://127.0.0.1:8501'

@@ -55,77 +55,179 @@ The scanner never changes your projects — the only exception is the optional s
 Exact package versions are pinned in [requirements.txt](requirements.txt). No cloud services, external database
 or JavaScript build tools are used.
 
-## Install on any Windows 10/11 laptop
-Each laptop has its own independent copy with its own settings, database and results. Nothing is shared between PCs.
+## Installation (step by step, from a fresh Windows laptop)
+Follow these steps in order on each Windows 10/11 laptop that should run the scanner. Each laptop gets its own
+independent copy with its own settings, database and reports — nothing is shared between PCs and nothing is uploaded.
+It takes about 10–15 minutes, most of it downloads.
 
-**1. Install the tools (once).** Open PowerShell:
+### What you need
+| Item | Why | Notes |
+|---|---|---|
+| Windows 10 or 11 (64-bit) | The app and its scripts are Windows-only | PowerShell 5.1 is built in |
+| Internet connection (during setup) | Download the tools and the vulnerability database (~80 MB) | Scans can run offline afterwards |
+| **Python 3.12 or newer** | Runs the app | Tested with 3.14 |
+| **Git** | Clones the code; reads branch / commit and Git history | |
+| **Trivy** | Finds vulnerable libraries and unsafe Docker / cloud settings | |
+| **Gitleaks** | Finds passwords and keys in files and in Git history | |
+| Microsoft Edge (or Chrome) | Prints the report to PDF | Edge is already on every Windows 10/11 PC |
+| winget | Installs the tools above with one command each | Built into Windows 10/11 ("App Installer" in the Microsoft Store) |
+
+Administrator rights are only needed if your company's policy requires them for `winget`.
+
+### Step 1 — Open PowerShell
+Press **Start**, type **PowerShell**, and open **Windows PowerShell**. All commands below are typed there.
+Check that winget works:
 ```powershell
-winget install Python.Python.3.14      # or Python 3.12+ from python.org (tick "Add python.exe to PATH")
-winget install Git.Git
-winget install AquaSecurity.Trivy
-winget install Gitleaks.Gitleaks
+winget --version
 ```
-Close and reopen PowerShell so the new tools are found.
+If it says *not recognised*, install **App Installer** from the Microsoft Store, then reopen PowerShell.
 
-**2. Get the code.** Clone it, or extract a zip made with `scripts\package.ps1` on another PC:
+### Step 2 — Install the tools (once per laptop)
+```powershell
+winget install --id Python.Python.3.14 -e
+winget install --id Git.Git -e
+winget install --id AquaSecurity.Trivy -e
+winget install --id Gitleaks.Gitleaks -e
+```
+If you install Python from https://www.python.org/downloads/windows/ instead, tick **"Add python.exe to PATH"** on the
+first screen of the installer.
+
+**Close PowerShell and open a new window** so Windows finds the new programs, then check them:
+```powershell
+python --version
+git --version
+trivy --version
+gitleaks version
+```
+Each command should print a version number. If one says *not recognised*, see
+[If something goes wrong](#if-something-goes-wrong) below.
+
+### Step 3 — Clone the code
+Pick a folder for the app — `C:\Tools\LocalSecurityScanner` is used here. Any folder works, but keep it **outside**
+the project folders you plan to scan.
 ```powershell
 git clone https://github.com/AvengX/Local-Security-Scanner-Implementation.git C:\Tools\LocalSecurityScanner
 cd C:\Tools\LocalSecurityScanner
 ```
+No Git? Download the zip from the GitHub page (**Code → Download ZIP**), or use a zip made with
+`scripts\package.ps1` on another PC, and extract it to `C:\Tools\LocalSecurityScanner`.
 
-**3. Install the app.** This step:
-* creates a private Python environment (`.venv`),
-* installs the pinned packages,
-* creates `config.yaml` and the database,
-* runs a health check.
-
-It is safe to run again.
+### Step 4 — Install the app
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\install.ps1
 ```
+This script is safe to run again at any time. It:
+1. checks Python (3.12+), Git, Trivy and Gitleaks and tells you what is missing,
+2. creates a private Python environment in `.venv` (nothing is installed into your system Python),
+3. installs the exact package versions from `requirements.txt`,
+4. creates `config.yaml` from `config.example.yaml` — **only if it does not exist yet**, so your settings are never
+   overwritten,
+5. creates the local database in `data\`,
+6. runs a health check.
 
-**4. Download the vulnerability database** (needs internet, about 80 MB):
+Missed Trivy or Gitleaks in step 2? Run it with `-InstallScanners` and it offers to install them (it asks first):
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\install.ps1 -InstallScanners
+```
+`-ExecutionPolicy Bypass` only applies to this one command; it does not change your PC's settings.
+
+### Step 5 — Download the vulnerability database
+Trivy needs its list of known vulnerabilities (about 80 MB, needs internet):
 ```powershell
 .\.venv\Scripts\python.exe run_scan.py update-databases
-.\.venv\Scripts\python.exe run_scan.py health          # git, trivy, gitleaks, bandit and dast should all say OK
 ```
-
-**5. Start the dashboard:**
+Then check that everything is ready:
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\start.ps1     # opens http://127.0.0.1:8501
+.\.venv\Scripts\python.exe run_scan.py health
 ```
+`git`, `trivy`, `gitleaks`, `bandit` and `dast` should all say **OK**. Refresh the database now and then (for example
+weekly) with the same `update-databases` command.
 
-**6. Point it at your projects.** In the dashboard, open **Settings → Configuration → 1 · Repository roots**,
-press **Browse for a folder…** to pick a folder in the normal Windows dialog (or type/paste paths, one per line),
-then press **Validate and save**.
-Alternatively, edit `config.yaml`:
-```yaml
-repository_roots: ['C:\Users\you\source\repos', 'D:\Projects']
-```
-
-**7. Scan.** Go to **Repositories → Discover repositories → Scan all repositories**. The page updates on its own when the scan finishes.
-
-**8. Optional: prove it works on this laptop.** Open **VAPT Lab → Run VAPT test**, or run:
+### Step 6 — Start the dashboard
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\run_vapt_test.ps1   # should report 106/106 PASS
+powershell -ExecutionPolicy Bypass -File .\scripts\start.ps1
+```
+Open **http://127.0.0.1:8501** in your browser. The dashboard only listens on this computer (127.0.0.1); other PCs
+on the network cannot open it. Keep the PowerShell window open while you use it, and press **Ctrl+C** there to stop
+it. Port 8501 busy? Use another one: `.\scripts\start.ps1 -Port 8510`.
+
+### Step 7 — Run your first scan
+1. Paste the path of a project folder into **Project folder or website address** (for example `D:\Projects\my-app`),
+   or click **Browse…** to pick it.
+2. Click **Scan**. Progress is shown live; it takes a few minutes depending on the project size. You can refresh or
+   click around — the scan keeps running.
+3. When it finishes, the PDF report is shown in the page. Use **Download PDF** or **Open in new tab**.
+   A folder containing several Git repositories gives one report per repository.
+
+Reports are saved in `reports\vapt\` and listed under **Earlier reports** in the dashboard.
+The same scan from the command line:
+```powershell
+.\.venv\Scripts\python.exe run_scan.py vapt "D:\Projects\my-app"
 ```
 
-**Every day after that:** run `.\scripts\start.ps1` and use the dashboard.
-**Get updates:** `git pull`, then `.\scripts\install.ps1` again if `requirements.txt` changed, then restart the dashboard.
-Database changes are applied automatically when it starts.
+### Step 8 (optional) — Settings in `config.yaml`
+The folder scan works without changing anything. Open `config.yaml` in any text editor for extras (every option is
+explained in `config.example.yaml`):
 
-| Problem on a new laptop | Fix |
+* **Logo on every PDF page:**
+  ```yaml
+  report:
+    logo_path: data/branding/logo.svg     # .svg, .png or .jpg
+    organisation: ''                      # optional name next to the logo
+  ```
+  Put the logo file in `data\branding\` (git-ignored, so it never goes to GitHub).
+* **Test a project's running web app** (optionally signed in with a test account): `dast.targets`.
+* **Test a live website you are authorised to test:** add its exact host name, then paste its `https://…` address in
+  the dashboard — or link it to a project under `dast.targets` so the code and the site are in one report:
+  ```yaml
+  dast:
+    allowed_hosts:
+    - staging.example.com
+  ```
+* **Offline mode** (no internet during scans): `scan.offline: true`.
+
+Restart the dashboard after editing `config.yaml`.
+
+### Every day after that
+```powershell
+cd C:\Tools\LocalSecurityScanner
+powershell -ExecutionPolicy Bypass -File .\scripts\start.ps1
+```
+
+### Updating to a newer version
+```powershell
+cd C:\Tools\LocalSecurityScanner
+git pull
+powershell -ExecutionPolicy Bypass -File .\scripts\install.ps1
+```
+Then restart the dashboard. Your `config.yaml`, database and reports are kept; database changes are applied
+automatically.
+
+### If something goes wrong
+| Problem | Fix |
 |---|---|
-| Sidebar or `health` shows Trivy **Blocked by Windows** | Windows Smart App Control stopped `trivy.exe` (it is not code-signed). The laptop's owner must allow it ([docs/SECURITY.md](docs/SECURITY.md)). Until then, Trivy scans show as FAILED, never as clean. |
-| `DLL load failed ... Application Control` during install | Same cause; keep the versions pinned in `requirements.txt`. |
-| Vuln DB shows **Missing** | Step 4 while online, or **Settings → Scanners & vulnerability DB → Update**. |
-| No repositories appear | Check the folders in step 6, then press **Discover repositories**. The page explains what is wrong. |
-| `python` not found | Reinstall Python with "Add to PATH" ticked, then reopen PowerShell. |
+| `python`, `git`, `trivy` or `gitleaks` is *not recognised* | Close and reopen PowerShell (new programs are only found in new windows). Still missing: install it again (step 2); for Python, tick "Add python.exe to PATH". |
+| `install.ps1` says Python 3.12+ is required | Install a newer Python (step 2), reopen PowerShell and run step 4 again. |
+| *running scripts is disabled on this system* | Type the commands exactly as shown, starting with `powershell -ExecutionPolicy Bypass -File …`. |
+| `health` shows Trivy **Blocked by Windows**, or `DLL load failed … Application Control` | Windows Smart App Control or a company policy blocked a program. The PC's owner or IT must allow it ([docs/SECURITY.md](docs/SECURITY.md), [docs/INSTALLATION.md](docs/INSTALLATION.md)). Blocked scans are reported as *did not finish*, never as clean. |
+| Vulnerability database **Missing** | Run step 5 while online, or turn off `scan.offline`. |
+| Gitleaks *dubious ownership* | If you trust the repository: `git config --global --add safe.directory "<repo path>"`. |
+| *Another scan is running* | Wait for it to finish (one scan at a time). |
+| PDF not created | Make sure Microsoft Edge (or Chrome) is installed. The HTML report is still saved in `reports\vapt\`. |
 | Port 8501 already in use | `.\scripts\start.ps1 -Port 8510` |
-| Gitleaks FAILED "dubious ownership" | `git config --global --add safe.directory "<repo path>"` |
 
-Your `config.yaml`, database, reports and logs are git-ignored and left out of the zip, so sharing the code never shares
-your results. Scheduled scans must be set up separately on each laptop. More detail: [docs/SHARING.md](docs/SHARING.md).
+Logs are in `logs\` (`scanner.log`). Your `config.yaml`, database, reports and logs are git-ignored and left out of
+the zip, so sharing the code never shares your results. More: [docs/SHARING.md](docs/SHARING.md).
+
+### Uninstall
+```powershell
+cd C:\Tools\LocalSecurityScanner
+.\.venv\Scripts\python.exe run_scan.py unschedule --frequency all   # only if you set up scheduled scans
+cd ..
+Remove-Item -Recurse -Force C:\Tools\LocalSecurityScanner           # deletes the app, its settings and all reports
+winget uninstall --id AquaSecurity.Trivy -e                         # optional
+winget uninstall --id Gitleaks.Gitleaks -e                          # optional
+```
 
 ## Using the dashboard
 One page. Full guide: [docs/UI_GUIDE.md](docs/UI_GUIDE.md).
@@ -160,7 +262,7 @@ Advanced settings (web addresses for the live web scan, test-account login, skip
 | SAST (Bandit) | Static analysis of Python code, offline; own `--ini` (repository `.bandit` ignored), skip folders, `sast.skip_tests`, code snippets and password values removed from stored results and saved reports |
 | Orchestration | scan-all / scan-repo, bounded concurrency, per-repo + job locks, timeouts, Ctrl+C cancellation, per-scan isolation, batch summaries |
 | Storage | SQLite with FKs, WAL, transactions, indexes, migrations, duplicate prevention, retention |
-| Dashboard | Dark security-operations UI: Overview (posture, metrics, problems-by-project table, recommended actions, health), Security Findings, Vulnerabilities, Secrets, Code issues, Web app issues, Misconfigurations, Repositories, Scan History, Reports, VAPT Lab, Settings — sidebar health panel, global search, finding history, guided empty/error states. See [docs/UI_GUIDE.md](docs/UI_GUIDE.md) |
+| Dashboard | One page: paste a folder (or Browse…) or an allowed website address, Scan with live progress, PDF report shown in the page with Download / Open in new tab, earlier reports. See [docs/UI_GUIDE.md](docs/UI_GUIDE.md) |
 | Reports | Raw JSON per scan, CSV, consolidated JSON, Markdown/HTML summary, per-repository reports, detailed VAPT-style audit report (HTML → PDF) |
 | Automation | Windows Task Scheduler (daily/weekly) with explicit confirmation |
 | Offline | Cached DB only, visible freshness/staleness, DB-missing detection |
@@ -175,11 +277,8 @@ Discovery → Orchestrator → (Trivy | Gitleaks | Bandit | code scan | DAST) �
 Windows 10/11, PowerShell 5.1+, Python 3.12+ (tested 3.14.7), Git, Trivy (tested 0.76.2), Gitleaks (tested 8.30.1). Bandit 1.9.4 is installed from requirements.txt. The code scan for other languages and the web scan (DAST) are built in.
 
 ## 5. Windows installation
-```powershell
-cd D:\LocalSecurityScanner
-powershell -ExecutionPolicy Bypass -File .\scripts\install.ps1      # add -InstallScanners to offer winget installs
-```
-Details, Smart App Control notes and manual steps: [docs/INSTALLATION.md](docs/INSTALLATION.md).
+Step by step: [Installation](#installation-step-by-step-from-a-fresh-windows-laptop) above. Smart App Control notes and
+manual steps: [docs/INSTALLATION.md](docs/INSTALLATION.md).
 
 ## 6. Trivy installation
 `winget install AquaSecurity.Trivy` (or download from https://github.com/aquasecurity/trivy/releases).
@@ -198,8 +297,7 @@ py -3 -m venv .venv
 `config.yaml` (created from `config.example.yaml`, never overwritten by scripts). Key settings:
 `repository_roots`, `excluded_dirs`, `scan.timeout_seconds`, `scan.concurrency`, `scan.severities`,
 `scan.offline`, `scan.db_freshness_hours`, `scan.retention_days`, `trivy.*`, `gitleaks.*`, `sast.*`, `dast.*`, `paths.*`.
-All values are validated (Pydantic); invalid configs are rejected with a clear message. The dashboard
-Settings page edits the same file. Use `--config` or `LSS_CONFIG` for alternative configs.
+All values are validated (Pydantic); invalid configs are rejected with a clear message. Use `--config` or `LSS_CONFIG` for alternative configs.
 For production, point `paths.*` outside any scanned root (e.g. `%LOCALAPPDATA%\LocalSecurityScanner\data`);
 the app's own data/report/log directories are always excluded from discovery and from Trivy.
 
@@ -207,7 +305,6 @@ the app's own data/report/log directories are always excluded from discovery and
 ```powershell
 .\.venv\Scripts\python.exe run_scan.py discover
 ```
-or **Repositories → Discover repositories** in the dashboard.
 
 ## 11. Manual scanning
 ```powershell
@@ -238,7 +335,7 @@ Pages and states are described in [docs/UI_GUIDE.md](docs/UI_GUIDE.md). The late
 `finding_changes`, `repo_locks`, `settings`.
 
 ## 16. Reports
-Raw: `reports/<Repo>_<id>/*.json`. Exports: `reports/exports/` via `run_scan.py report` or the Reports page.
+Raw: `reports/<Repo>_<id>/*.json`. VAPT reports: `reports/vapt/`. Exports: `reports/exports/` via `run_scan.py report`.
 Detailed audit report, management summary (add `--pdf` for a PDF) and SARIF for GitHub / VS Code:
 ```powershell
 .\.venv\Scripts\python.exe run_scan.py audit --name my-project --pdf
